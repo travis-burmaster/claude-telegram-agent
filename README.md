@@ -1,5 +1,8 @@
 # Claude Telegram Agent
 
+![Claude Code × Telegram](linkedin-banner.png)
+
+
 Talk to Claude from your phone. One command, full Claude Code — right in Telegram.
 
 ## 30-Second Setup
