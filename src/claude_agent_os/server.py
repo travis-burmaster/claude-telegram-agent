@@ -1,5 +1,6 @@
 """FastAPI server for claude-agent-os."""
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,6 +15,8 @@ from claude_agent_os.tasks import TaskManager
 from claude_agent_os.cron import CronScheduler
 from claude_agent_os.agents import AgentPool
 from claude_agent_os.auth import AuthMiddleware
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -74,14 +77,39 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.include_router(webhook_router)
     app.include_router(pages_router)
 
+    # Telegram bot (optional — only if bot_token is configured)
+    telegram_bot = None
+    if cfg.telegram.bot_token:
+        from claude_agent_os.telegram.bot import TelegramBot
+
+        telegram_bot = TelegramBot(
+            bot_token=cfg.telegram.bot_token,
+            allowed_users=cfg.telegram.allowed_users,
+            agent_pool=agent_pool,
+            soul_path=cfg.paths.soul,
+            memory_manager=memory_mgr,
+        )
+        app.state.telegram_bot = telegram_bot
+
     # Startup/shutdown events
     @app.on_event("startup")
     async def startup():
         cron_scheduler.start()
+        if telegram_bot:
+            try:
+                await telegram_bot.start()
+                logger.info("Telegram bot started")
+            except Exception as e:
+                logger.error(f"Failed to start Telegram bot: {e}")
 
     @app.on_event("shutdown")
     async def shutdown():
         cron_scheduler.stop()
+        if telegram_bot:
+            try:
+                await telegram_bot.stop()
+            except Exception as e:
+                logger.error(f"Error stopping Telegram bot: {e}")
 
     return app
 
