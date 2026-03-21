@@ -1,5 +1,6 @@
 """FastAPI server for claude-agent-os."""
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -91,10 +92,70 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         )
         app.state.telegram_bot = telegram_bot
 
+    # Task worker loop
+    task_worker_handle = None
+
+    async def task_worker_loop():
+        """Periodically check for pending tasks and auto-assign to agents."""
+        interval = 30  # seconds between checks
+        while True:
+            try:
+                if not cfg.agent.auto_pickup_tasks:
+                    await asyncio.sleep(interval)
+                    continue
+
+                pending = task_mgr.list(status="pending")
+                if not pending:
+                    await asyncio.sleep(interval)
+                    continue
+
+                # Pick highest priority first
+                priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+                pending.sort(key=lambda t: priority_order.get(t.get("priority", "medium"), 2))
+
+                for task in pending:
+                    if agent_pool.active_count() >= cfg.agent.max_concurrent_agents:
+                        break
+
+                    task_id = task["id"]
+                    task_mgr.update_status(task_id, "in_progress")
+                    logger.info(f"Auto-picking task {task_id}: {task['title']}")
+
+                    prompt = f"Task: {task['title']}\n\n{task.get('description', '')}"
+                    workspace = task.get("workspace") or str(Path.home())
+
+                    try:
+                        result = await agent_pool.spawn(
+                            task_id=task_id,
+                            prompt=prompt,
+                            workspace=workspace,
+                            model=cfg.agent.model,
+                            timeout=600,
+                        )
+                        new_status = "completed" if result.exit_code == 0 else "failed"
+                        task_mgr.update(task_id, status=new_status,
+                                        result=result.output[:5000],
+                                        agent_session=task_id)
+                        logger.info(f"Task {task_id} finished: {new_status}")
+                    except Exception as e:
+                        task_mgr.update_status(task_id, "failed")
+                        task_mgr.update(task_id, result=str(e))
+                        logger.error(f"Task {task_id} failed: {e}")
+
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"Task worker error: {e}")
+
+            await asyncio.sleep(interval)
+
     # Startup/shutdown events
     @app.on_event("startup")
     async def startup():
+        nonlocal task_worker_handle
         cron_scheduler.start()
+        task_worker_handle = asyncio.create_task(task_worker_loop())
+        logger.info("Task worker started (auto_pickup=%s)", cfg.agent.auto_pickup_tasks)
         if telegram_bot:
             try:
                 await telegram_bot.start()
@@ -104,6 +165,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown():
+        nonlocal task_worker_handle
+        if task_worker_handle:
+            task_worker_handle.cancel()
         cron_scheduler.stop()
         if telegram_bot:
             try:
