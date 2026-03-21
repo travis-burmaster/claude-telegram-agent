@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Claude Agent OS{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="status-cards">
+    <div class="card status-card">
+        <div class="card-value" id="active-agents">0</div>
+        <div class="card-label">Active Agents</div>
+    </div>
+    <div class="card status-card">
+        <div class="card-value" id="total-tasks">0</div>
+        <div class="card-label">Total Tasks</div>
+    </div>
+    <div class="card status-card">
+        <div class="card-value" id="active-cron">0</div>
+        <div class="card-label">Active Cron Jobs</div>
+    </div>
+    <div class="card status-card">
+        <div class="card-value" id="memory-count">0</div>
+        <div class="card-label">Memories</div>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <div class="card">
+        <h3>Recent Activity</h3>
+        <div id="recent-activity">
+            <p class="muted">Loading...</p>
+        </div>
+    </div>
+    <div class="card">
+        <h3>Quick Actions</h3>
+        <div class="quick-actions">
+            <a href="/tasks" class="btn btn-primary">New Task</a>
+            <a href="/cron" class="btn btn-secondary">Run Cron Job</a>
+            <a href="/chat" class="btn btn-secondary">Open Chat</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDashboard() {
+    try {
+        const [tasks, cron, memories, logs] = await Promise.all([
+            api('GET', '/api/tasks'),
+            api('GET', '/api/cron'),
+            api('GET', '/api/memory'),
+            api('GET', '/api/logs'),
+        ]);
+
+        document.getElementById('total-tasks').textContent = (tasks.tasks || []).length;
+        document.getElementById('active-cron').textContent =
+            (cron.jobs || []).filter(j => j.enabled).length;
+        document.getElementById('memory-count').textContent = (memories.memories || []).length;
+
+        const activityEl = document.getElementById('recent-activity');
+        const logFiles = (logs.logs || []).slice(0, 10);
+        if (logFiles.length === 0) {
+            activityEl.innerHTML = '<p class="muted">No recent activity</p>';
+        } else {
+            activityEl.innerHTML = '<ul class="activity-list">' +
+                logFiles.map(f => `<li>${f}</li>`).join('') + '</ul>';
+        }
+    } catch (e) {
+        console.error('Dashboard load error:', e);
+    }
+}
+loadDashboard();
+</script>
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Tasks - Claude Agent OS{% endblock %}
+{% block page_title %}Tasks{% endblock %}
+
+{% block content %}
+<div class="tasks-header">
+    <button class="btn btn-primary" onclick="showNewTaskModal()">New Task</button>
+</div>
+
+<div class="kanban-board" id="kanban-board">
+    <div class="kanban-column" data-status="pending">
+        <h3 class="kanban-title">Pending</h3>
+        <div class="kanban-cards" id="col-pending"></div>
+    </div>
+    <div class="kanban-column" data-status="in_progress">
+        <h3 class="kanban-title">In Progress</h3>
+        <div class="kanban-cards" id="col-in_progress"></div>
+    </div>
+    <div class="kanban-column" data-status="completed">
+        <h3 class="kanban-title">Completed</h3>
+        <div class="kanban-cards" id="col-completed"></div>
+    </div>
+    <div class="kanban-column" data-status="failed">
+        <h3 class="kanban-title">Failed</h3>
+        <div class="kanban-cards" id="col-failed"></div>
+    </div>
+</div>
+
+<!-- New Task Modal -->
+<div class="modal" id="task-modal" style="display:none">
+    <div class="modal-content">
+        <h3>New Task</h3>
+        <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="task-title" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Description</label>
+            <textarea id="task-desc" class="form-input" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Priority</label>
+            <select id="task-priority" class="form-input">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Tags (comma separated)</label>
+            <input type="text" id="task-tags" class="form-input">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="hideModal('task-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="createTask()">Create</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const statuses = ['pending', 'in_progress', 'completed', 'failed'];
+const priorityColors = { critical: 'danger', high: 'warning', medium: 'accent', low: 'muted' };
+
+async function loadTasks() {
+    const data = await api('GET', '/api/tasks');
+    statuses.forEach(s => { document.getElementById('col-' + s).innerHTML = ''; });
+    (data.tasks || []).forEach(task => {
+        const col = document.getElementById('col-' + (task.status || 'pending'));
+        if (!col) return;
+        const card = document.createElement('div');
+        card.className = 'kanban-card';
+        card.draggable = true;
+        card.dataset.id = task.id;
+        const badge = priorityColors[task.priority] || 'muted';
+        card.innerHTML = `<div class="card-title">${task.title}</div>
+            <span class="badge badge-${badge}">${task.priority}</span>
+            ${(task.tags||[]).map(t => `<span class="badge">${t}</span>`).join(' ')}`;
+        card.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', task.id));
+        col.appendChild(card);
+    });
+}
+
+statuses.forEach(status => {
+    const col = document.getElementById('col-' + status);
+    col.parentElement.addEventListener('dragover', (e) => e.preventDefault());
+    col.parentElement.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const taskId = e.dataTransfer.getData('text/plain');
+        await api('PATCH', `/api/tasks/${taskId}/status`, { status });
+        loadTasks();
+    });
+});
+
+function showNewTaskModal() { document.getElementById('task-modal').style.display = 'flex'; }
+function hideModal(id) { document.getElementById(id).style.display = 'none'; }
+
+async function createTask() {
+    const tags = document.getElementById('task-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+    await api('POST', '/api/tasks', {
+        title: document.getElementById('task-title').value,
+        description: document.getElementById('task-desc').value,
+        priority: document.getElementById('task-priority').value,
+        tags,
+    });
+    hideModal('task-modal');
+    loadTasks();
+    showToast('Task created', 'success');
+}
+
+loadTasks();
+</script>
+{% endblock %}

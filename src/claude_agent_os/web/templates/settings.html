@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Settings - Claude Agent OS{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="settings-grid">
+    <div class="card">
+        <h3>Agent</h3>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="cfg-agent-name" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Default Model</label>
+            <input type="text" id="cfg-agent-model" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Max Concurrent Agents</label>
+            <input type="number" id="cfg-agent-max" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="saveAgent()">Save Agent Config</button>
+    </div>
+
+    <div class="card">
+        <h3>Web Server</h3>
+        <div class="form-group">
+            <label>Host</label>
+            <input type="text" id="cfg-web-host" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Port</label>
+            <input type="number" id="cfg-web-port" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="saveWeb()">Save Web Config</button>
+    </div>
+
+    <div class="card">
+        <h3>Telegram</h3>
+        <div class="form-group">
+            <label>Bot Token</label>
+            <input type="password" id="cfg-tg-token" class="form-input" placeholder="***">
+        </div>
+        <div class="form-group">
+            <label>Allowed Users (comma separated)</label>
+            <input type="text" id="cfg-tg-users" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="saveTelegram()">Save Telegram Config</button>
+    </div>
+
+    <div class="card">
+        <h3>Change Password</h3>
+        <div class="form-group">
+            <label>New Password</label>
+            <input type="password" id="new-password" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Confirm Password</label>
+            <input type="password" id="confirm-password" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="changePassword()">Change Password</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadSettings() {
+    const data = await api('GET', '/api/settings');
+    const s = data.settings || {};
+    document.getElementById('cfg-agent-name').value = s.agent?.name || '';
+    document.getElementById('cfg-agent-model').value = s.agent?.model || '';
+    document.getElementById('cfg-agent-max').value = s.agent?.max_concurrent_agents || 3;
+    document.getElementById('cfg-web-host').value = s.web?.host || '127.0.0.1';
+    document.getElementById('cfg-web-port').value = s.web?.port || 8420;
+    document.getElementById('cfg-tg-users').value = (s.telegram?.allowed_users || []).join(', ');
+}
+
+async function saveAgent() {
+    await api('PUT', '/api/settings', { agent: {
+        name: document.getElementById('cfg-agent-name').value,
+        model: document.getElementById('cfg-agent-model').value,
+        max_concurrent_agents: parseInt(document.getElementById('cfg-agent-max').value),
+    }});
+    showToast('Agent config saved', 'success');
+}
+
+async function saveWeb() {
+    await api('PUT', '/api/settings', { web: {
+        host: document.getElementById('cfg-web-host').value,
+        port: parseInt(document.getElementById('cfg-web-port').value),
+    }});
+    showToast('Web config saved', 'success');
+}
+
+async function saveTelegram() {
+    const token = document.getElementById('cfg-tg-token').value;
+    const users = document.getElementById('cfg-tg-users').value.split(',').map(u => u.trim()).filter(Boolean);
+    const body = { telegram: { allowed_users: users } };
+    if (token && token !== '***') body.telegram.bot_token = token;
+    await api('PUT', '/api/settings', body);
+    showToast('Telegram config saved', 'success');
+}
+
+async function changePassword() {
+    const pw = document.getElementById('new-password').value;
+    const confirm = document.getElementById('confirm-password').value;
+    if (pw !== confirm) { showToast('Passwords do not match', 'danger'); return; }
+    if (!pw) { showToast('Password cannot be empty', 'danger'); return; }
+    await api('POST', '/api/settings/password', { password: pw });
+    showToast('Password changed', 'success');
+    document.getElementById('new-password').value = '';
+    document.getElementById('confirm-password').value = '';
+}
+
+loadSettings();
+</script>
+{% endblock %}

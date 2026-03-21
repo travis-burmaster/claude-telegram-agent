@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Login - Claude Agent OS{% endblock %}
+{% block page_title %}{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card">
+        <h1>Claude Agent OS</h1>
+        <p class="login-subtitle">Enter your password to continue</p>
+        {% if error %}
+        <div class="alert alert-danger">Invalid password. Please try again.</div>
+        {% endif %}
+        <form method="post" action="/login">
+            <div class="form-group">
+                <input type="password" name="password" placeholder="Password" autofocus class="form-input">
+            </div>
+            <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

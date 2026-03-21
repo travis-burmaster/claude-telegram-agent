@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Memory - Claude Agent OS{% endblock %}
+{% block page_title %}Memory{% endblock %}
+
+{% block content %}
+<div class="tasks-header">
+    <div class="search-bar">
+        <input type="text" id="memory-search" class="form-input" placeholder="Search memories...">
+        <button class="btn btn-secondary" onclick="searchMemories()">Search</button>
+    </div>
+    <button class="btn btn-primary" onclick="showNewMemoryModal()">New Memory</button>
+</div>
+
+<div class="filter-tabs">
+    <button class="tab active" onclick="filterMemories(null, this)">All</button>
+    <button class="tab" onclick="filterMemories('user', this)">User</button>
+    <button class="tab" onclick="filterMemories('project', this)">Project</button>
+    <button class="tab" onclick="filterMemories('feedback', this)">Feedback</button>
+    <button class="tab" onclick="filterMemories('reference', this)">Reference</button>
+    <button class="tab" onclick="filterMemories('conversation', this)">Conversation</button>
+</div>
+
+<div class="memory-grid" id="memory-grid"></div>
+
+<!-- New Memory Modal -->
+<div class="modal" id="memory-modal" style="display:none">
+    <div class="modal-content">
+        <h3 id="memory-modal-title">New Memory</h3>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="mem-name" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Type</label>
+            <select id="mem-type" class="form-input">
+                <option value="user">User</option>
+                <option value="project">Project</option>
+                <option value="feedback">Feedback</option>
+                <option value="reference">Reference</option>
+                <option value="conversation">Conversation</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Tags (comma separated)</label>
+            <input type="text" id="mem-tags" class="form-input">
+        </div>
+        <div class="form-group">
+            <label>Content</label>
+            <textarea id="mem-content" class="form-input" rows="6"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="hideModal('memory-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveMemory()">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentFilter = null;
+
+async function loadMemories(type) {
+    const url = type ? `/api/memory?type=${type}` : '/api/memory';
+    const data = await api('GET', url);
+    renderMemories(data.memories || []);
+}
+
+async function searchMemories() {
+    const q = document.getElementById('memory-search').value.trim();
+    if (!q) { loadMemories(currentFilter); return; }
+    const data = await api('GET', `/api/memory/search?q=${encodeURIComponent(q)}`);
+    renderMemories(data.memories || []);
+}
+
+function renderMemories(memories) {
+    const grid = document.getElementById('memory-grid');
+    if (memories.length === 0) {
+        grid.innerHTML = '<p class="muted">No memories found</p>';
+        return;
+    }
+    grid.innerHTML = memories.map(m => `
+        <div class="card memory-card" onclick="viewMemory('${m.type}', '${m.name}')">
+            <div class="card-title">${m.name}</div>
+            <span class="badge badge-accent">${m.type}</span>
+            ${(m.tags||[]).map(t => `<span class="badge">${t}</span>`).join(' ')}
+            <div class="card-meta">${m.updated || m.created || ''}</div>
+        </div>
+    `).join('');
+}
+
+function filterMemories(type, btn) {
+    currentFilter = type;
+    document.querySelectorAll('.filter-tabs .tab').forEach(t => t.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    loadMemories(type);
+}
+
+async function viewMemory(type, name) {
+    const data = await api('GET', `/api/memory/${type}/${name}`);
+    const m = data.memory;
+    document.getElementById('memory-modal-title').textContent = 'Edit: ' + name;
+    document.getElementById('mem-name').value = m.name;
+    document.getElementById('mem-name').disabled = true;
+    document.getElementById('mem-type').value = m.type;
+    document.getElementById('mem-type').disabled = true;
+    document.getElementById('mem-tags').value = (m.tags || []).join(', ');
+    document.getElementById('mem-content').value = m.content || '';
+    document.getElementById('memory-modal').style.display = 'flex';
+    document.getElementById('memory-modal').dataset.mode = 'edit';
+    document.getElementById('memory-modal').dataset.editType = type;
+    document.getElementById('memory-modal').dataset.editName = name;
+}
+
+function showNewMemoryModal() {
+    document.getElementById('memory-modal-title').textContent = 'New Memory';
+    document.getElementById('mem-name').value = '';
+    document.getElementById('mem-name').disabled = false;
+    document.getElementById('mem-type').disabled = false;
+    document.getElementById('mem-tags').value = '';
+    document.getElementById('mem-content').value = '';
+    document.getElementById('memory-modal').style.display = 'flex';
+    document.getElementById('memory-modal').dataset.mode = 'create';
+}
+
+function hideModal(id) { document.getElementById(id).style.display = 'none'; }
+
+async function saveMemory() {
+    const modal = document.getElementById('memory-modal');
+    const tags = document.getElementById('mem-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+    const content = document.getElementById('mem-content').value;
+
+    if (modal.dataset.mode === 'edit') {
+        await api('PUT', `/api/memory/${modal.dataset.editType}/${modal.dataset.editName}`, { tags, content });
+        showToast('Memory updated', 'success');
+    } else {
+        await api('POST', '/api/memory', {
+            name: document.getElementById('mem-name').value,
+            type: document.getElementById('mem-type').value,
+            tags, content,
+        });
+        showToast('Memory created', 'success');
+    }
+    hideModal('memory-modal');
+    loadMemories(currentFilter);
+}
+
+loadMemories(null);
+</script>
+{% endblock %}

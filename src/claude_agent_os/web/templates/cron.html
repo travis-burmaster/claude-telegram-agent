@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Cron Jobs - Claude Agent OS{% endblock %}
+{% block page_title %}Cron Jobs{% endblock %}
+
+{% block content %}
+<div class="tasks-header">
+    <button class="btn btn-primary" onclick="showNewJobModal()">New Job</button>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Schedule</th>
+            <th>Enabled</th>
+            <th>Next Run</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="cron-tbody"></tbody>
+</table>
+
+<div id="history-panel" class="card" style="display:none; margin-top:1rem;">
+    <h3>Run History: <span id="history-job-name"></span></h3>
+    <div id="history-content"></div>
+</div>
+
+<!-- New Job Modal -->
+<div class="modal" id="job-modal" style="display:none">
+    <div class="modal-content">
+        <h3>New Cron Job</h3>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="job-name" class="form-input" placeholder="check-deploys">
+        </div>
+        <div class="form-group">
+            <label>Schedule (cron)</label>
+            <input type="text" id="job-schedule" class="form-input" placeholder="*/30 * * * *">
+        </div>
+        <div class="form-group">
+            <label>Prompt</label>
+            <textarea id="job-prompt" class="form-input" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Workspace</label>
+            <input type="text" id="job-workspace" class="form-input" placeholder="~/git">
+        </div>
+        <div class="form-group">
+            <label>Model</label>
+            <input type="text" id="job-model" class="form-input" placeholder="claude-sonnet-4-6">
+        </div>
+        <div class="form-group">
+            <label>Timeout (seconds)</label>
+            <input type="number" id="job-timeout" class="form-input" value="300">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="hideModal('job-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="createJob()">Create</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadJobs() {
+    const data = await api('GET', '/api/cron');
+    const tbody = document.getElementById('cron-tbody');
+    tbody.innerHTML = '';
+    (data.jobs || []).forEach(job => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${job.name}</td>
+            <td><code>${job.schedule}</code></td>
+            <td>${job.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-muted">Off</span>'}</td>
+            <td>${job.next_run || '-'}</td>
+            <td class="actions">
+                <button class="btn btn-sm btn-primary" onclick="triggerJob('${job.name}')">Run</button>
+                <button class="btn btn-sm btn-secondary" onclick="toggleJob('${job.name}', ${job.enabled})">${job.enabled ? 'Disable' : 'Enable'}</button>
+                <button class="btn btn-sm btn-secondary" onclick="showHistory('${job.name}')">History</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteJob('${job.name}')">Delete</button>
+            </td>`;
+        tbody.appendChild(tr);
+    });
+}
+
+async function triggerJob(name) {
+    await api('POST', `/api/cron/${name}/trigger`);
+    showToast('Job triggered: ' + name, 'success');
+}
+
+async function toggleJob(name, enabled) {
+    await api('POST', `/api/cron/${name}/${enabled ? 'disable' : 'enable'}`);
+    loadJobs();
+}
+
+async function deleteJob(name) {
+    if (!confirm('Delete job: ' + name + '?')) return;
+    await api('DELETE', `/api/cron/${name}`);
+    loadJobs();
+    showToast('Job deleted', 'success');
+}
+
+async function showHistory(name) {
+    const data = await api('GET', `/api/cron/${name}/history`);
+    document.getElementById('history-panel').style.display = 'block';
+    document.getElementById('history-job-name').textContent = name;
+    const content = document.getElementById('history-content');
+    const history = data.history || [];
+    if (history.length === 0) {
+        content.innerHTML = '<p class="muted">No run history</p>';
+    } else {
+        content.innerHTML = '<table class="data-table"><thead><tr><th>Time</th><th>Exit</th><th>Duration</th><th>Output</th></tr></thead><tbody>' +
+            history.reverse().map(h => `<tr><td>${h.timestamp}</td><td>${h.exit_code}</td><td>${h.duration?.toFixed(1)}s</td><td><pre>${(h.output||'').substring(0,200)}</pre></td></tr>`).join('') +
+            '</tbody></table>';
+    }
+}
+
+function showNewJobModal() { document.getElementById('job-modal').style.display = 'flex'; }
+function hideModal(id) { document.getElementById(id).style.display = 'none'; }
+
+async function createJob() {
+    await api('POST', '/api/cron', {
+        name: document.getElementById('job-name').value,
+        schedule: document.getElementById('job-schedule').value,
+        prompt: document.getElementById('job-prompt').value,
+        workspace: document.getElementById('job-workspace').value,
+        model: document.getElementById('job-model').value,
+        timeout: parseInt(document.getElementById('job-timeout').value) || 300,
+    });
+    hideModal('job-modal');
+    loadJobs();
+    showToast('Job created', 'success');
+}
+
+loadJobs();
+</script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Logs - Claude Agent OS{% endblock %}
+{% block page_title %}Logs{% endblock %}
+
+{% block content %}
+<div class="tasks-header">
+    <label class="toggle-label">
+        <input type="checkbox" id="auto-refresh"> Auto-refresh (30s)
+    </label>
+</div>
+
+<div class="logs-layout">
+    <div class="logs-list card">
+        <h3>Log Files</h3>
+        <ul id="log-file-list" class="file-list"></ul>
+    </div>
+    <div class="logs-viewer card">
+        <h3>Content: <span id="log-filename">-</span></h3>
+        <pre id="log-content" class="log-content"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let refreshTimer = null;
+
+async function loadLogList() {
+    const data = await api('GET', '/api/logs');
+    const list = document.getElementById('log-file-list');
+    list.innerHTML = (data.logs || []).map(f =>
+        `<li><a href="#" onclick="viewLog('${f}'); return false;">${f}</a></li>`
+    ).join('');
+}
+
+async function viewLog(filename) {
+    document.getElementById('log-filename').textContent = filename;
+    const data = await api('GET', `/api/logs/${filename}`);
+    document.getElementById('log-content').textContent = data.content || '';
+}
+
+document.getElementById('auto-refresh').addEventListener('change', (e) => {
+    if (e.target.checked) {
+        refreshTimer = setInterval(loadLogList, 30000);
+    } else {
+        clearInterval(refreshTimer);
+    }
+});
+
+loadLogList();
+</script>
+{% endblock %}

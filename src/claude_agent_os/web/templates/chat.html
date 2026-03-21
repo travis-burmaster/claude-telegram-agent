@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Chat - Claude Agent OS{% endblock %}
+{% block page_title %}Chat{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-messages" id="chat-messages">
+        <p class="muted">Send a message to start chatting with Claude.</p>
+    </div>
+    <div class="chat-input-area">
+        <textarea id="chat-input" class="form-input" placeholder="Type your message..." rows="3"></textarea>
+        <button id="chat-send" class="btn btn-primary">Send</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const messagesEl = document.getElementById('chat-messages');
+const inputEl = document.getElementById('chat-input');
+const sendBtn = document.getElementById('chat-send');
+let firstMessage = true;
+
+function addMessage(role, text) {
+    if (firstMessage) {
+        messagesEl.innerHTML = '';
+        firstMessage = false;
+    }
+    const div = document.createElement('div');
+    div.className = 'chat-message chat-' + role;
+    div.innerHTML = '<div class="chat-role">' + role + '</div><div class="chat-text">' +
+        text.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>';
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendMessage() {
+    const prompt = inputEl.value.trim();
+    if (!prompt) return;
+    inputEl.value = '';
+    addMessage('you', prompt);
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Thinking...';
+    try {
+        const data = await api('POST', '/api/chat', { prompt });
+        addMessage('claude', data.output || 'No response');
+    } catch (e) {
+        addMessage('error', 'Failed: ' + e.message);
+    }
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendMessage();
+});
+</script>
+{% endblock %}

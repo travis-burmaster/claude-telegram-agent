@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Soul - Claude Agent OS{% endblock %}
+{% block page_title %}Soul{% endblock %}
+
+{% block content %}
+<div class="soul-editor">
+    <div class="soul-edit-pane">
+        <h3>Edit soul.md</h3>
+        <textarea id="soul-content" class="form-input soul-textarea" rows="30"></textarea>
+        <div class="soul-actions">
+            <button class="btn btn-primary" onclick="saveSoul()">Save</button>
+            <button class="btn btn-secondary" onclick="loadSoul()">Reload</button>
+        </div>
+    </div>
+    <div class="soul-preview-pane card">
+        <h3>Preview</h3>
+        <pre id="soul-preview" class="soul-preview-text"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadSoul() {
+    const data = await api('GET', '/api/soul');
+    document.getElementById('soul-content').value = data.content || '';
+    document.getElementById('soul-preview').textContent = data.content || '';
+}
+
+document.getElementById('soul-content').addEventListener('input', (e) => {
+    document.getElementById('soul-preview').textContent = e.target.value;
+});
+
+async function saveSoul() {
+    const content = document.getElementById('soul-content').value;
+    await api('PUT', '/api/soul', { content });
+    showToast('Soul saved', 'success');
+}
+
+loadSoul();
+</script>
+{% endblock %}

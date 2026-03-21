@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Claude Agent OS{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    {% if page != 'login' %}
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>Claude Agent OS</h1>
+        </div>
+        <nav>
+            <a href="/" class="nav-item {% if page == 'dashboard' %}active{% endif %}">
+                <span class="nav-icon">&#9632;</span> Dashboard
+            </a>
+            <a href="/chat" class="nav-item {% if page == 'chat' %}active{% endif %}">
+                <span class="nav-icon">&#9993;</span> Chat
+            </a>
+            <a href="/tasks" class="nav-item {% if page == 'tasks' %}active{% endif %}">
+                <span class="nav-icon">&#9745;</span> Tasks
+            </a>
+            <a href="/cron" class="nav-item {% if page == 'cron' %}active{% endif %}">
+                <span class="nav-icon">&#9200;</span> Cron
+            </a>
+            <a href="/memory" class="nav-item {% if page == 'memory' %}active{% endif %}">
+                <span class="nav-icon">&#9729;</span> Memory
+            </a>
+            <a href="/soul" class="nav-item {% if page == 'soul' %}active{% endif %}">
+                <span class="nav-icon">&#9733;</span> Soul
+            </a>
+            <a href="/logs" class="nav-item {% if page == 'logs' %}active{% endif %}">
+                <span class="nav-icon">&#9783;</span> Logs
+            </a>
+            <a href="/settings" class="nav-item {% if page == 'settings' %}active{% endif %}">
+                <span class="nav-icon">&#9881;</span> Settings
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <form method="post" action="/logout">
+                <button type="submit" class="btn btn-secondary btn-sm">Logout</button>
+            </form>
+        </div>
+    </aside>
+    {% endif %}
+
+    <main class="{% if page != 'login' %}with-sidebar{% endif %}">
+        <header class="page-header">
+            <h2>{% block page_title %}{% endblock %}</h2>
+        </header>
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <div id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
