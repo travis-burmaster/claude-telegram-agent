@@ -17,10 +17,10 @@ class TestBuildClaudeCommand:
         cmd = build_claude_command("Hello")
         assert cmd == ["claude", "--print", "--dangerously-skip-permissions", "-p", "Hello"]
 
-    def test_with_workspace(self):
-        cmd = build_claude_command("Hello", workspace="/tmp/ws")
-        assert "--cwd" in cmd
-        assert "/tmp/ws" in cmd
+    def test_workspace_not_in_command(self):
+        """Workspace is passed as cwd to subprocess, not as a CLI flag."""
+        cmd = build_claude_command("Hello")
+        assert "--cwd" not in cmd
 
     def test_with_model(self):
         cmd = build_claude_command("Hello", model="claude-opus-4")
@@ -34,21 +34,18 @@ class TestBuildClaudeCommand:
     def test_all_options(self):
         cmd = build_claude_command(
             "Do stuff",
-            workspace="/code",
             model="claude-opus-4",
             skip_permissions=True,
         )
         assert cmd[0] == "claude"
         assert "--print" in cmd
         assert "--dangerously-skip-permissions" in cmd
-        assert "--cwd" in cmd
-        assert "/code" in cmd
         assert "--model" in cmd
         assert "claude-opus-4" in cmd
         assert cmd[-2:] == ["-p", "Do stuff"]
 
     def test_prompt_is_last(self):
-        cmd = build_claude_command("My prompt", workspace="/ws", model="m")
+        cmd = build_claude_command("My prompt", model="m")
         assert cmd[-2] == "-p"
         assert cmd[-1] == "My prompt"
 

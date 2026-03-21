@@ -17,7 +17,6 @@ class AgentResult:
 
 def build_claude_command(
     prompt: str,
-    workspace: str | None = None,
     model: str | None = None,
     skip_permissions: bool = True,
 ) -> list[str]:
@@ -25,8 +24,6 @@ def build_claude_command(
     cmd = ["claude", "--print"]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
-    if workspace:
-        cmd.extend(["--cwd", workspace])
     if model:
         cmd.extend(["--model", model])
     cmd.extend(["-p", prompt])
@@ -51,7 +48,7 @@ class AgentPool:
     ) -> AgentResult:
         """Spawn a Claude agent subprocess, respecting pool limits."""
         async with self._semaphore:
-            cmd = build_claude_command(prompt, workspace=workspace, model=model)
+            cmd = build_claude_command(prompt, model=model)
             start = time.monotonic()
 
             try:
@@ -59,6 +56,7 @@ class AgentPool:
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
+                    cwd=workspace,
                 )
                 # Store the task for potential cancellation
                 self._active[task_id] = asyncio.current_task()  # type: ignore[assignment]
