@@ -2,7 +2,26 @@
 
 Always-on personal AI agent for developers. Memory, scheduled tasks, web dashboard, sub-agents -- all from your terminal or Telegram.
 
-## Quick Start
+## Quick Start (macOS — Homebrew)
+
+```bash
+# 1. Install via Homebrew
+brew tap travis-burmaster/claude-telegram-agent
+brew install --HEAD claude-agent-os
+
+# 2. Run setup (creates data dirs, sets web password)
+claude-agent setup
+
+# 3. Start as a background service (survives reboots)
+brew services start claude-agent-os
+
+# 4. Open the web UI
+open http://127.0.0.1:8420
+```
+
+To connect Telegram, add your bot token and allowed user IDs to `~/.claude-agent-os/config.yaml` (see Configuration below), then restart the service with `brew services restart claude-agent-os`.
+
+## Quick Start (from source)
 
 ```bash
 # 1. Clone and install
@@ -95,9 +114,19 @@ Environment variables can override config values:
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Overrides `telegram.bot_token` in config |
 
-## LaunchDaemon (macOS)
+## Always-on operation (macOS)
 
-For always-on operation that survives reboots:
+**Homebrew (recommended):**
+
+```bash
+brew services start claude-agent-os   # start and enable on boot
+brew services restart claude-agent-os # restart after config changes
+brew services stop claude-agent-os    # stop the service
+```
+
+Logs: `/opt/homebrew/var/log/claude-agent-os.log` and `claude-agent-os-error.log`.
+
+**LaunchDaemon (from-source installs):**
 
 ```bash
 # Install (requires sudo)
@@ -107,7 +136,7 @@ uv run claude-agent install-daemon
 uv run claude-agent uninstall-daemon
 ```
 
-The daemon runs `python -m claude_agent_os` which starts the full server. Logs go to `~/.claude-agent-os/logs/daemon-stdout.log`.
+Logs: `~/.claude-agent-os/logs/daemon-stdout.log`.
 
 ## Original Telegram Wrapper
 
