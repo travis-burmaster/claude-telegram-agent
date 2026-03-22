@@ -1,3 +1,4 @@
+from __future__ import annotations
 """HTML page routes — serves Jinja2 templates."""
 
 from fastapi import APIRouter, Request

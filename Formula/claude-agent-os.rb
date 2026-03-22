@@ -10,52 +10,53 @@ class ClaudeAgentOs < Formula
   head "https://github.com/travis-burmaster/claude-telegram-agent.git", branch: "main"
 
   depends_on "python@3.12"
+  depends_on "rust" => :build
 
   # Core dependencies — generated from uv.lock / pyproject.toml
   # Run `brew update-python-resources claude-agent-os` to regenerate this list
   resource "annotated-types" do
     url "https://files.pythonhosted.org/packages/source/a/annotated_types/annotated_types-0.7.0.tar.gz"
-    sha256 "aff07c09a53a08bc8cfead79f0f35be0e93e0fdbe7ef43e213b8d4db5f7b7017"
+    sha256 "aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89"
   end
 
   resource "anyio" do
     url "https://files.pythonhosted.org/packages/source/a/anyio/anyio-4.9.0.tar.gz"
-    sha256 "673c0c244e15788651a4ff38710fea9675823028a6f08a5eda46e093a41d0703"
+    sha256 "673c0c244e15788651a4ff38710fea9675823028a6f08a5eda409e0c9840a028"
   end
 
   resource "apscheduler" do
-    url "https://files.pythonhosted.org/packages/source/A/APScheduler/APScheduler-3.11.0.tar.gz"
-    sha256 "ef41cc29b0f8ef6fee91bd4d73af3d1beae22b2e5e2e63fc7f5c0c61e94fa53"
+    url "https://files.pythonhosted.org/packages/source/A/APScheduler/apscheduler-3.11.2.tar.gz"
+    sha256 "2a9966b052ec805f020c8c4c3ae6e6a06e24b1bf19f2e11d91d8cca0473eef41"
   end
 
   resource "bcrypt" do
     url "https://files.pythonhosted.org/packages/source/b/bcrypt/bcrypt-4.3.0.tar.gz"
-    sha256 "3c7ea86b6b2eb6b5473e39e26de4f1c8df1e8d0cc7fce80b0d31af5df14d98d"
+    sha256 "3a3fd2204178b6d2adcf09cb4f6426ffef54762577a7c9b54c159008cb288c18"
   end
 
   resource "certifi" do
     url "https://files.pythonhosted.org/packages/source/c/certifi/certifi-2025.1.31.tar.gz"
-    sha256 "3d5da6f9c287f9babb1e557e4a1eed97c5a1b37f66cdddd5b7a1780a6f3f3b7"
+    sha256 "3d5da6925056f6f18f119200434a4780a94263f10d1c21d032a6f6b2baa20651"
   end
 
   resource "click" do
     url "https://files.pythonhosted.org/packages/source/c/click/click-8.1.8.tar.gz"
-    sha256 "ed53c9d8a4567f82cc2f03bf73b1f20a3c7c0b4d3e3ce12b1c5d8c8b6c0f0b8"
+    sha256 "ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a"
   end
 
   resource "fastapi" do
     url "https://files.pythonhosted.org/packages/source/f/fastapi/fastapi-0.115.12.tar.gz"
-    sha256 "1b8f6fc1b7c6b2c53b9e5e6b75d6a3c5f8f9a2e4d7c0b3a6f9e2d5c8b1a4f7"
+    sha256 "1e2c2a2646905f9e83d32f04a3f86aff4a286669c6c950ca95b5fd68c2602681"
   end
 
   resource "h11" do
     url "https://files.pythonhosted.org/packages/source/h/h11/h11-0.14.0.tar.gz"
-    sha256 "8f19fbbe99e72420ff35c00b27a34cb9937e902a8b810e2c88300c9f0a9192fd"
+    sha256 "8f19fbbe99e72420ff35c00b27a34cb9937e902a8b810e2c88300c6f0a3b699d"
   end
 
   resource "httpcore" do
     url "https://files.pythonhosted.org/packages/source/h/httpcore/httpcore-1.0.8.tar.gz"
-    sha256 "86d60f8fcfe0aa159e7ef66a033a0d5e58b9ef8d25c8e41861a9f4af0b15b84f"
+    sha256 "86e94505ed24ea06514883fd44d2bc02d90e77e7979c8eb71b90f41d364a1bad"
   end
 
   resource "httpx" do
@@ -70,7 +71,7 @@ class ClaudeAgentOs < Formula
 
   resource "idna" do
     url "https://files.pythonhosted.org/packages/source/i/idna/idna-3.10.tar.gz"
-    sha256 "12f65c9b470abda6dc35cf0b9d7d1775e4dd22e99c31f40f16e0c77c034bab9a"
+    sha256 "12f65c9b470abda6dc35cf8e63cc574b1c52b11df2c86030af0ac09b01b13ea9"
   end
 
   resource "jinja2" do
@@ -79,8 +80,8 @@ class ClaudeAgentOs < Formula
   end
 
   resource "markdown-it-py" do
-    url "https://files.pythonhosted.org/packages/source/m/markdown-it-py/markdown_it_py-3.0.0.tar.gz"
-    sha256 "e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb"
+    url "https://files.pythonhosted.org/packages/source/m/markdown-it-py/markdown_it_py-4.0.0.tar.gz"
+    sha256 "cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3"
   end
 
   resource "markupsafe" do
@@ -95,7 +96,7 @@ class ClaudeAgentOs < Formula
 
   resource "pydantic" do
     url "https://files.pythonhosted.org/packages/source/p/pydantic/pydantic-2.11.3.tar.gz"
-    sha256 "7471657138b5e3f17849b5c6b8e74e3b3c0d20d7c7f84db02b2aff3c06bf3cf"
+    sha256 "7471657138c16adad9322fe3070c0116dd6c3ad8d649300e3cbdfe91f4db4ec3"
   end
 
   resource "pydantic-core" do
@@ -110,17 +111,17 @@ class ClaudeAgentOs < Formula
 
   resource "python-dotenv" do
     url "https://files.pythonhosted.org/packages/source/p/python-dotenv/python_dotenv-1.1.0.tar.gz"
-    sha256 "41f90bc6f5f177cfd9ff1ec23a7f1e31a0f6c7a23d4c5e01de7a83a9e9b0e8f"
+    sha256 "41f90bc6f5f177fb41f53e87666db362025010eb28f60a01c9143bfa33a2b2d5"
   end
 
   resource "python-multipart" do
     url "https://files.pythonhosted.org/packages/source/p/python-multipart/python_multipart-0.0.20.tar.gz"
-    sha256 "8a62d3a8335f06589fe9b9d7f78eb6e0c2e1eb0c8e9e45024fbc83ddb23e4a37"
+    sha256 "8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13"
   end
 
   resource "python-telegram-bot" do
     url "https://files.pythonhosted.org/packages/source/p/python-telegram-bot/python_telegram_bot-21.11.1.tar.gz"
-    sha256 "7a2e9d3c1f5b8e4a6d0c2e4f7a9b1d3e5f7a9b1d3e5f7a9b1d3e5f7a9b1d3e5"
+    sha256 "2abda5202f27a838f35e8140e5292af0f4f8fad6c2e5123b2defadd5f4e8ca02"
   end
 
   resource "pyyaml" do
@@ -135,22 +136,27 @@ class ClaudeAgentOs < Formula
 
   resource "sniffio" do
     url "https://files.pythonhosted.org/packages/source/s/sniffio/sniffio-1.3.1.tar.gz"
-    sha256 "f4324edc670a0f49750a81b895f35c3a7f35a9baa3a3b0cf0b8b1fcf89d87e5"
+    sha256 "f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"
   end
 
   resource "starlette" do
     url "https://files.pythonhosted.org/packages/source/s/starlette/starlette-0.46.1.tar.gz"
-    sha256 "f37b37af3a0483d7ef41c3f0f49db7cb9e0975a1aabb7c8b09f1a5c0b3c56e9"
+    sha256 "3c88d58ee4bd1bb807c0d1acb381838afc7752f9ddaec81bbe4383611d833230"
+  end
+
+  resource "typing-inspection" do
+    url "https://files.pythonhosted.org/packages/source/t/typing_inspection/typing_inspection-0.4.2.tar.gz"
+    sha256 "ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464"
   end
 
   resource "typing-extensions" do
     url "https://files.pythonhosted.org/packages/source/t/typing_extensions/typing_extensions-4.13.2.tar.gz"
-    sha256 "e6c81219bd689f51865d9e372991c540bda33a0379d373077dc7b458f3e6b2e9"
+    sha256 "e6c81219bd689f51865d9e372991c540bda33a0379d5573cddb9a3a23f7caaef"
   end
 
   resource "uvicorn" do
     url "https://files.pythonhosted.org/packages/source/u/uvicorn/uvicorn-0.34.0.tar.gz"
-    sha256 "404cec6cf15b9c4b7a3fc31e6d1b5ad30d84a40f2b83c2c03ca1ad2cfbda8ed"
+    sha256 "404051050cd7e905de2c9a7e61790943440b3416f49cb409f965d9dcd0fa73e9"
   end
 
   resource "uvloop" do
@@ -160,7 +166,7 @@ class ClaudeAgentOs < Formula
 
   resource "watchfiles" do
     url "https://files.pythonhosted.org/packages/source/w/watchfiles/watchfiles-1.0.5.tar.gz"
-    sha256 "b3c7dc7ac7c3ff5b3bcd2e33f4e6952ddaa6b64a03d39fb52da29e94c3ae5d09"
+    sha256 "b7529b5dcc114679d43827d8c35a07c493ad6f083633d573d81c660abc5979e9"
   end
 
   resource "websockets" do

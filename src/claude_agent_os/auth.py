@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Authentication middleware and password utilities for claude-agent-os."""
 
 import secrets

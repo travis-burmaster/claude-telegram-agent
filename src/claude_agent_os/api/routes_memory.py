@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Memory API routes."""
 
 from fastapi import APIRouter, Request

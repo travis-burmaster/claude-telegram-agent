@@ -1,3 +1,4 @@
+from __future__ import annotations
 """File-based memory manager with YAML frontmatter and JSON index."""
 
 import json

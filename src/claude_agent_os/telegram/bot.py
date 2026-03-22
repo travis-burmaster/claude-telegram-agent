@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Telegram bot listener with allowlist and file handling."""
 
 import asyncio

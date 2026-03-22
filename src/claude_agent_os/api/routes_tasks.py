@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Task API routes."""
 
 from fastapi import APIRouter, Request

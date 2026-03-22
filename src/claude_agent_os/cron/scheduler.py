@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Cron-based task scheduler using APScheduler with YAML job definitions."""
 
 import asyncio

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """File-based task manager with JSON persistence."""
 
 import json

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Configuration loader for claude-agent-os."""
 
 from dataclasses import dataclass, field

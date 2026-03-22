@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Memory selection and formatting for prompt injection."""
 
 from pathlib import Path

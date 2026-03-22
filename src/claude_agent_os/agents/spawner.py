@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Claude Code subprocess spawner with pool-based concurrency limits."""
 
 import asyncio
