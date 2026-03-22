@@ -40,8 +40,8 @@ class TelegramBot:
         )
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
-        logger.info("Telegram bot started")
+        await self.app.updater.start_polling(drop_pending_updates=True)
+        logger.info("Telegram bot started, allowed_users=%s", self.allowed_users)
 
     async def stop(self):
         """Stop the Telegram bot gracefully."""
@@ -53,7 +53,9 @@ class TelegramBot:
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages — check allowlist, spawn agent."""
         user_id = str(update.effective_user.id)
+        logger.info("Received message from user_id=%s: %s", user_id, update.message.text[:100])
         if user_id not in self.allowed_users:
+            logger.warning("Access denied for user_id=%s (allowed: %s)", user_id, self.allowed_users)
             await update.message.reply_text("Access denied.")
             return
 
