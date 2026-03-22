@@ -5,7 +5,7 @@ Homebrew tap for [claude-agent-os](https://github.com/travis-burmaster/claude-te
 ## Install
 
 ```bash
-brew tap travis-burmaster/claude-agent-os
+brew tap travis-burmaster/claude-telegram-agent https://github.com/travis-burmaster/claude-telegram-agent
 brew install claude-agent-os
 ```
 
