@@ -66,7 +66,7 @@ def _dataclass_from_dict(cls: type, data: dict[str, Any]) -> Any:
         if k not in field_names:
             continue
         f = cls.__dataclass_fields__[k]
-        if f.type is Path or f.type == Path:
+        if f.type is Path or f.type == Path or f.type == "Path":
             filtered[k] = Path(v)
         else:
             filtered[k] = v
