@@ -2,9 +2,15 @@ from __future__ import annotations
 """Claude Code subprocess spawner with pool-based concurrency limits."""
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+DATA_DIR = Path.home() / ".claude-agent-os"
 
 
 @dataclass
@@ -14,6 +20,55 @@ class AgentResult:
     output: str
     exit_code: int
     duration: float
+
+
+def _build_system_context() -> str:
+    """Build a system prompt supplement with soul, memories, and data dir awareness."""
+    parts: list[str] = []
+    data_dir = DATA_DIR
+
+    # Soul
+    soul_path = data_dir / "soul.md"
+    if soul_path.exists():
+        parts.append(f"# Soul\n{soul_path.read_text().strip()}")
+
+    # Data directory map
+    parts.append(f"# Your persistent data directory: {data_dir}")
+    parts.append(
+        "You are a persistent agent. Your files survive across sessions.\n"
+        "Key paths:\n"
+        f"  soul:    {data_dir / 'soul.md'} — your personality and instructions\n"
+        f"  memory:  {data_dir / 'memory/'} — YAML-frontmatter markdown files organized by type\n"
+        f"  tasks:   {data_dir / 'tasks/'} — task tracker (active.json)\n"
+        f"  cron:    {data_dir / 'cron/'} — scheduled job definitions\n"
+        f"  config:  {data_dir / 'config.yaml'} — server and channel config\n"
+        f"  inbox:   {data_dir / 'inbox/'} — files received from Telegram\n"
+        f"  logs:    {data_dir / 'logs/'} — agent output logs"
+    )
+
+    # Memory index summary
+    memory_index = data_dir / "memory" / "index.json"
+    if memory_index.exists():
+        try:
+            import json
+            index = json.loads(memory_index.read_text())
+            if index:
+                lines = [f"# Memories ({len(index)} total)"]
+                for entry in index[:20]:  # cap at 20 to keep prompt reasonable
+                    lines.append(
+                        f"  - [{entry.get('type', '?')}] {entry.get('name', '?')} "
+                        f"(tags: {', '.join(entry.get('tags', []))})"
+                    )
+                if len(index) > 20:
+                    lines.append(f"  ... and {len(index) - 20} more")
+                lines.append(
+                    f"\nTo read a memory, read the file at {data_dir / 'memory/<type>/<name>.md'}"
+                )
+                parts.append("\n".join(lines))
+        except Exception:
+            pass
+
+    return "\n\n".join(parts)
 
 
 def build_claude_command(
@@ -27,6 +82,11 @@ def build_claude_command(
         cmd.append("--dangerously-skip-permissions")
     if model:
         cmd.extend(["--model", model])
+
+    system_context = _build_system_context()
+    if system_context:
+        cmd.extend(["--append-system-prompt", system_context])
+
     cmd.extend(["-p", prompt])
     return cmd
 
@@ -50,6 +110,7 @@ class AgentPool:
         """Spawn a Claude agent subprocess, respecting pool limits."""
         async with self._semaphore:
             cmd = build_claude_command(prompt, model=model)
+            logger.info("Spawning agent %s: %s", task_id, cmd[0:4])
             start = time.monotonic()
 
             try:
