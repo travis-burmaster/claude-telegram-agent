@@ -148,6 +148,11 @@ class ClaudeAgentOs < Formula
     sha256 "e6c81219bd689f51865d9e372991c540bda33a0379d373077dc7b458f3e6b2e9"
   end
 
+  resource "typing-inspection" do
+    url "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz"
+    sha256 "ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464"
+  end
+
   resource "uvicorn" do
     url "https://files.pythonhosted.org/packages/source/u/uvicorn/uvicorn-0.34.0.tar.gz"
     sha256 "404cec6cf15b9c4b7a3fc31e6d1b5ad30d84a40f2b83c2c03ca1ad2cfbda8ed"

@@ -1,5 +1,6 @@
 """CLI entry point for claude-agent-os."""
 
+import logging
 import sys
 
 import click
@@ -26,6 +27,8 @@ def main(ctx):
 @click.option("--port", default=None, type=int, help="Bind port (overrides config)")
 def server(host, port):
     """Start the agent server."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
     from claude_agent_os.server import create_app
     import uvicorn
 
