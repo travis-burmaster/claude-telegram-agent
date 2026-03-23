@@ -1,0 +1,46 @@
+spec_version: "0.1.0"
+name: claude-agent-os
+version: 0.2.0
+description: Always-on personal AI agent for developers with memory, scheduled tasks, web dashboard, sub-agents, and Telegram integration
+
+model:
+  preferred: claude-sonnet-4-6
+
+author:
+  name: Travis Burmaster
+  email: travis@burmaster.com
+
+license: MIT
+
+repository: https://github.com/travis-burmaster/claude-telegram-agent
+
+tags:
+  - personal-assistant
+  - telegram
+  - memory
+  - task-management
+  - cron
+  - web-dashboard
+
+compliance:
+  risk_tier: low
+  frameworks: []
+  supervision:
+    human_in_the_loop: external_actions
+    kill_switch: true
+  recordkeeping:
+    audit_logging: true
+    retention_period: 1y
+    immutable: false
+  model_risk:
+    validation_cadence: on_release
+    ongoing_monitoring: false
+  segregation_of_duties:
+    roles:
+      - name: owner
+        permissions: [read, write, execute, configure]
+      - name: telegram_user
+        permissions: [read, execute]
+    conflicts:
+      - [owner, telegram_user]
+    enforcement: advisory

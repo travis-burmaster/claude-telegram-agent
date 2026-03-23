@@ -3,11 +3,29 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="status-cards">
-    <div class="card status-card">
-        <div class="card-value" id="active-agents">0</div>
-        <div class="card-label">Active Agents</div>
+<!-- Session Monitor -->
+<div class="card session-panel" id="session-panel">
+    <div class="session-header">
+        <h3>Claude Code Session</h3>
+        <div class="session-controls">
+            <button class="btn btn-sm btn-primary" id="btn-start" onclick="sessionAction('start')">Start</button>
+            <button class="btn btn-sm btn-danger" id="btn-stop" onclick="sessionAction('stop')">Stop</button>
+            <button class="btn btn-sm btn-secondary" id="btn-restart" onclick="sessionAction('restart')">Restart</button>
+        </div>
     </div>
+    <div class="session-status">
+        <div class="status-indicator" id="session-indicator"></div>
+        <span id="session-state">loading...</span>
+        <span class="muted" id="session-uptime"></span>
+        <span class="muted" id="session-silence"></span>
+        <span class="muted" id="session-restarts"></span>
+    </div>
+    <div class="session-logs" id="session-logs">
+        <div class="log-stream" id="log-stream"></div>
+    </div>
+</div>
+
+<div class="status-cards">
     <div class="card status-card">
         <div class="card-value" id="total-tasks">0</div>
         <div class="card-label">Total Tasks</div>
@@ -42,6 +60,100 @@
 
 {% block scripts %}
 <script>
+// ── Session monitoring ──────────────────────────────────────────
+
+const stateColors = {
+    running: '#22c55e', stopped: '#6b7280', starting: '#eab308',
+    stuck: '#f97316', crashed: '#ef4444', stopping: '#eab308'
+};
+
+function formatDuration(seconds) {
+    if (!seconds || seconds < 0) return '';
+    if (seconds < 60) return Math.round(seconds) + 's';
+    if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return h + 'h ' + m + 'm';
+}
+
+async function loadSessionStatus() {
+    try {
+        const data = await api('GET', '/api/session/status');
+        const indicator = document.getElementById('session-indicator');
+        const stateEl = document.getElementById('session-state');
+        const uptimeEl = document.getElementById('session-uptime');
+        const silenceEl = document.getElementById('session-silence');
+        const restartsEl = document.getElementById('session-restarts');
+
+        indicator.style.backgroundColor = stateColors[data.state] || '#6b7280';
+        stateEl.textContent = data.state.toUpperCase();
+
+        uptimeEl.textContent = data.uptime_seconds
+            ? 'uptime: ' + formatDuration(data.uptime_seconds) : '';
+        silenceEl.textContent = data.silence_seconds != null
+            ? 'silent: ' + formatDuration(data.silence_seconds) : '';
+        restartsEl.textContent = data.restart_count > 0
+            ? 'restarts: ' + data.restart_count : '';
+
+        // Toggle button visibility
+        const isRunning = ['running', 'stuck', 'starting'].includes(data.state);
+        document.getElementById('btn-start').style.display = isRunning ? 'none' : '';
+        document.getElementById('btn-stop').style.display = isRunning ? '' : 'none';
+    } catch (e) {
+        console.error('Session status error:', e);
+    }
+}
+
+async function sessionAction(action) {
+    try {
+        await api('POST', '/api/session/' + action);
+        await loadSessionStatus();
+    } catch (e) {
+        console.error('Session action error:', e);
+    }
+}
+
+// Live log WebSocket
+let logWs = null;
+function connectLogStream() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    logWs = new WebSocket(proto + '//' + location.host + '/api/session/ws/logs');
+    const logEl = document.getElementById('log-stream');
+
+    logWs.onmessage = (event) => {
+        const entry = JSON.parse(event.data);
+        const line = document.createElement('div');
+        line.className = 'log-line ' + entry.stream;
+        const ts = new Date(entry.timestamp * 1000).toLocaleTimeString();
+        line.textContent = '[' + ts + '] ' + entry.line;
+        logEl.appendChild(line);
+        // Keep last 200 lines in DOM
+        while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+        logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    logWs.onclose = () => setTimeout(connectLogStream, 3000);
+    logWs.onerror = () => logWs.close();
+}
+
+// Load initial logs
+async function loadInitialLogs() {
+    try {
+        const data = await api('GET', '/api/session/logs?n=50');
+        const logEl = document.getElementById('log-stream');
+        (data.lines || []).forEach(entry => {
+            const line = document.createElement('div');
+            line.className = 'log-line ' + entry.stream;
+            const ts = new Date(entry.timestamp * 1000).toLocaleTimeString();
+            line.textContent = '[' + ts + '] ' + entry.line;
+            logEl.appendChild(line);
+        });
+        logEl.scrollTop = logEl.scrollHeight;
+    } catch (e) {}
+}
+
+// ── Dashboard data ──────────────────────────────────────────────
+
 async function loadDashboard() {
     try {
         const [tasks, cron, memories, logs] = await Promise.all([
@@ -62,12 +174,18 @@ async function loadDashboard() {
             activityEl.innerHTML = '<p class="muted">No recent activity</p>';
         } else {
             activityEl.innerHTML = '<ul class="activity-list">' +
-                logFiles.map(f => `<li>${f}</li>`).join('') + '</ul>';
+                logFiles.map(f => '<li>' + f + '</li>').join('') + '</ul>';
         }
     } catch (e) {
         console.error('Dashboard load error:', e);
     }
 }
+
+// Init
+loadSessionStatus();
+loadInitialLogs();
+connectLogStream();
 loadDashboard();
+setInterval(loadSessionStatus, 10000);
 </script>
 {% endblock %}

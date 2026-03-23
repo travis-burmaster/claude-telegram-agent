@@ -16,6 +16,7 @@ from claude_agent_os.memory import MemoryManager
 from claude_agent_os.tasks import TaskManager
 from claude_agent_os.cron import CronScheduler
 from claude_agent_os.agents import AgentPool
+from claude_agent_os.session import SessionManager
 from claude_agent_os.auth import AuthMiddleware
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     task_mgr = TaskManager(cfg.paths.tasks)
     cron_scheduler = CronScheduler(cfg.paths.cron, agent_pool, cfg)
     soul_content = load_soul(cfg.paths.soul)
+    session_mgr = SessionManager(cfg)
 
     app = FastAPI(title="Claude Agent OS", version="0.2.0")
 
@@ -41,6 +43,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.state.task_mgr = task_mgr
     app.state.cron_scheduler = cron_scheduler
     app.state.soul_content = soul_content
+    app.state.session_mgr = session_mgr
 
     # Auth middleware
     app.add_middleware(AuthMiddleware)
@@ -67,6 +70,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     from claude_agent_os.api.routes_settings import router as settings_router
     from claude_agent_os.api.routes_webhook import router as webhook_router
     from claude_agent_os.api.routes_pages import router as pages_router
+    from claude_agent_os.api.routes_session import router as session_router
 
     app.include_router(auth_router)
     app.include_router(memory_router)
@@ -78,8 +82,12 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.include_router(settings_router)
     app.include_router(webhook_router)
     app.include_router(pages_router)
+    app.include_router(session_router)
 
-    # Telegram bot (optional — only if bot_token is configured)
+    # NOTE: Telegram is handled natively by the Claude Code session via
+    # --channels plugin:telegram@claude-plugins-official.  The separate
+    # python-telegram-bot listener is no longer started by default.
+    # Keep the TelegramBot class available for direct notification use.
     telegram_bot = None
     if cfg.telegram.bot_token:
         from claude_agent_os.telegram.bot import TelegramBot
@@ -157,12 +165,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         cron_scheduler.start()
         task_worker_handle = asyncio.create_task(task_worker_loop())
         logger.info("Task worker started (auto_pickup=%s)", cfg.agent.auto_pickup_tasks)
-        if telegram_bot:
-            try:
-                await telegram_bot.start()
-                logger.info("Telegram bot started")
-            except Exception as e:
-                logger.error(f"Failed to start Telegram bot: {e}")
+
+        # Auto-start the managed Claude Code + Telegram session
+        try:
+            await session_mgr.start()
+            logger.info("Managed Claude Code session started")
+        except Exception as e:
+            logger.error("Failed to start Claude Code session: %s", e)
 
     @app.on_event("shutdown")
     async def shutdown():
@@ -170,11 +179,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         if task_worker_handle:
             task_worker_handle.cancel()
         cron_scheduler.stop()
-        if telegram_bot:
-            try:
-                await telegram_bot.stop()
-            except Exception as e:
-                logger.error(f"Error stopping Telegram bot: {e}")
+
+        # Stop the managed session
+        try:
+            await session_mgr.stop()
+            logger.info("Managed Claude Code session stopped")
+        except Exception as e:
+            logger.error("Error stopping Claude Code session: %s", e)
 
     return app
 

@@ -17,6 +17,7 @@ class AgentCfg:
     model: str = "claude-sonnet-4-6"
     max_concurrent_agents: int = 3
     auto_pickup_tasks: bool = False
+    workspace: str = ""  # working directory for the managed session (empty = home)
 
 
 @dataclass
