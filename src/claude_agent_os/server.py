@@ -84,12 +84,23 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.include_router(pages_router)
     app.include_router(session_router)
 
-    # NOTE: Telegram is handled natively by the Claude Code session via
-    # the installed telegram@claude-plugins-official plugin.  The separate
-    # python-telegram-bot TelegramBot class is NOT instantiated — doing so
-    # would create a second getUpdates poller that conflicts with the
-    # plugin's grammy-based bot on the same token.
-    app.state.telegram_bot = None
+    # Telegram bot — uses python-telegram-bot to receive messages, then spawns
+    # one-shot Claude agents (via AgentPool) to process them and sends responses
+    # back directly through the Telegram API.  This is more reliable than the
+    # channel-plugin approach which requires the Claude CLI to properly handle
+    # MCP channel notifications in interactive mode.
+    telegram_bot = None
+    if cfg.telegram.bot_token:
+        from claude_agent_os.telegram.bot import TelegramBot
+
+        telegram_bot = TelegramBot(
+            bot_token=cfg.telegram.bot_token,
+            allowed_users=cfg.telegram.allowed_users,
+            agent_pool=agent_pool,
+            soul_path=cfg.paths.soul,
+            memory_manager=memory_mgr,
+        )
+        app.state.telegram_bot = telegram_bot
 
     # Task worker loop
     task_worker_handle = None
@@ -156,12 +167,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         task_worker_handle = asyncio.create_task(task_worker_loop())
         logger.info("Task worker started (auto_pickup=%s)", cfg.agent.auto_pickup_tasks)
 
-        # Auto-start the managed Claude Code + Telegram session
-        try:
-            await session_mgr.start()
-            logger.info("Managed Claude Code session started")
-        except Exception as e:
-            logger.error("Failed to start Claude Code session: %s", e)
+        # Start Telegram bot (python-telegram-bot based)
+        if telegram_bot:
+            try:
+                await telegram_bot.start()
+                logger.info("Telegram bot started")
+            except Exception as e:
+                logger.error("Failed to start Telegram bot: %s", e)
 
     @app.on_event("shutdown")
     async def shutdown():
@@ -170,12 +182,13 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             task_worker_handle.cancel()
         cron_scheduler.stop()
 
-        # Stop the managed session
-        try:
-            await session_mgr.stop()
-            logger.info("Managed Claude Code session stopped")
-        except Exception as e:
-            logger.error("Error stopping Claude Code session: %s", e)
+        # Stop Telegram bot
+        if telegram_bot:
+            try:
+                await telegram_bot.stop()
+                logger.info("Telegram bot stopped")
+            except Exception as e:
+                logger.error("Error stopping Telegram bot: %s", e)
 
     return app
 
