@@ -46,6 +46,22 @@ def _build_system_context() -> str:
         f"  logs:    {data_dir / 'logs/'} — agent output logs"
     )
 
+    # Recent conversation context (from Claude Code CLI sessions)
+    conversation_log = data_dir / "memory" / "conversation.md"
+    if conversation_log.exists():
+        convo_text = conversation_log.read_text().strip()
+        if convo_text:
+            # Keep only the tail to avoid bloating the prompt (~4k chars max)
+            max_chars = 4000
+            if len(convo_text) > max_chars:
+                convo_text = "...(truncated)\n" + convo_text[-max_chars:]
+            parts.append(
+                "# Recent Conversation Context\n"
+                "Below is a log of recent interactions between Travis and Claude "
+                "in the CLI. Use this to understand what's being worked on and "
+                "maintain continuity.\n\n" + convo_text
+            )
+
     # Memory index summary
     memory_index = data_dir / "memory" / "index.json"
     if memory_index.exists():
