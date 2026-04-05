@@ -34,6 +34,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     soul_content = load_soul(cfg.paths.soul)
     session_mgr = SessionManager(cfg)
 
+    # Ensure conversation DB is initialized
+    from claude_agent_os.conversation import init_conversation_db
+    init_conversation_db(cfg.paths.memory / "conversation.db")
+
     app = FastAPI(title="Claude Agent OS", version="0.2.0")
 
     # Store managers in app.state for route access

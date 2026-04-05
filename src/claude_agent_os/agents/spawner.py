@@ -48,39 +48,18 @@ def _build_system_context() -> str:
 
     # Recent conversation context (from Claude Code CLI sessions via SQLite)
     conversation_db = data_dir / "memory" / "conversation.db"
-    if conversation_db.exists():
-        try:
-            import sqlite3
-            conn = sqlite3.connect(str(conversation_db))
-            # Compact: keep only last 200 rows
-            conn.execute(
-                "DELETE FROM conversation WHERE id NOT IN "
-                "(SELECT id FROM conversation ORDER BY id DESC LIMIT 200)"
+    try:
+        from claude_agent_os.conversation import get_recent_context
+        convo_text = get_recent_context(conversation_db)
+        if convo_text:
+            parts.append(
+                "# Recent Conversation Context\n"
+                "Below is a log of recent interactions between Travis and Claude "
+                "in the CLI. Use this to understand what's being worked on and "
+                "maintain continuity.\n\n" + convo_text
             )
-            conn.commit()
-            # Fetch recent messages for context
-            rows = conn.execute(
-                "SELECT ts, role, content FROM conversation "
-                "ORDER BY id DESC LIMIT 50"
-            ).fetchall()
-            conn.close()
-            if rows:
-                lines = []
-                for ts, role, content in reversed(rows):
-                    label = "User" if role == "user" else "Assistant"
-                    lines.append(f"[{ts}] **{label}:** {content}")
-                convo_text = "\n".join(lines)
-                # Cap at ~4k chars
-                if len(convo_text) > 4000:
-                    convo_text = "...(truncated)\n" + convo_text[-4000:]
-                parts.append(
-                    "# Recent Conversation Context\n"
-                    "Below is a log of recent interactions between Travis and Claude "
-                    "in the CLI. Use this to understand what's being worked on and "
-                    "maintain continuity.\n\n" + convo_text
-                )
-        except Exception as e:
-            logger.warning("Failed to read conversation DB: %s", e)
+    except Exception as e:
+        logger.warning("Failed to read conversation DB: %s", e)
 
     # Memory index summary
     memory_index = data_dir / "memory" / "index.json"

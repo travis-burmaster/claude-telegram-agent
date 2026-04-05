@@ -267,10 +267,15 @@ def setup(password):
     console.print(f"[cyan]Setting up Claude Agent OS in {DEFAULT_DATA_DIR}[/cyan]")
 
     # Create all data directories
-    for subdir in ("memory", "tasks", "cron", "logs", "inbox"):
+    for subdir in ("memory", "tasks", "cron", "logs", "inbox", "hooks"):
         d = DEFAULT_DATA_DIR / subdir
         d.mkdir(parents=True, exist_ok=True)
         console.print(f"  [dim]Created {d}[/dim]")
+
+    # Initialize conversation log database
+    from claude_agent_os.conversation import init_conversation_db
+    init_conversation_db(DEFAULT_DATA_DIR / "memory" / "conversation.db")
+    console.print("  [dim]Initialized conversation.db[/dim]")
 
     # Write default soul.md if it doesn't exist
     soul_path = DEFAULT_DATA_DIR / "soul.md"
