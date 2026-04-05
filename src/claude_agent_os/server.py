@@ -85,21 +85,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     app.include_router(session_router)
 
     # NOTE: Telegram is handled natively by the Claude Code session via
-    # --channels plugin:telegram@claude-plugins-official.  The separate
-    # python-telegram-bot listener is no longer started by default.
-    # Keep the TelegramBot class available for direct notification use.
-    telegram_bot = None
-    if cfg.telegram.bot_token:
-        from claude_agent_os.telegram.bot import TelegramBot
-
-        telegram_bot = TelegramBot(
-            bot_token=cfg.telegram.bot_token,
-            allowed_users=cfg.telegram.allowed_users,
-            agent_pool=agent_pool,
-            soul_path=cfg.paths.soul,
-            memory_manager=memory_mgr,
-        )
-        app.state.telegram_bot = telegram_bot
+    # the installed telegram@claude-plugins-official plugin.  The separate
+    # python-telegram-bot TelegramBot class is NOT instantiated — doing so
+    # would create a second getUpdates poller that conflicts with the
+    # plugin's grammy-based bot on the same token.
+    app.state.telegram_bot = None
 
     # Task worker loop
     task_worker_handle = None

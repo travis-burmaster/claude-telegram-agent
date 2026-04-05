@@ -1,8 +1,15 @@
 from __future__ import annotations
-"""Managed Claude Code session — single long-running subprocess with monitoring."""
+"""Managed Claude Code session — single long-running subprocess with monitoring.
+
+Uses a pseudo-TTY so the Claude CLI runs in interactive mode, which is required
+for channel plugins (like Telegram) to inject messages via MCP notifications.
+"""
 
 import asyncio
 import logging
+import os
+import pty
+import signal
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -48,16 +55,21 @@ class SessionInfo:
 
 
 class SessionManager:
-    """Manages a single Claude Code + Telegram session as a supervised subprocess."""
+    """Manages a single Claude Code + Telegram session as a supervised subprocess.
+
+    Runs the claude CLI under a pseudo-TTY so it stays in interactive mode,
+    allowing channel plugins (Telegram) to inject messages via MCP notifications.
+    """
 
     def __init__(self, config: AgentConfig):
         self.config = config
         self.info = SessionInfo()
-        self._process: asyncio.subprocess.Process | None = None
+        self._pid: int | None = None
+        self._master_fd: int | None = None
         self._log_buffer: deque[LogEntry] = deque(maxlen=LOG_BUFFER_SIZE)
         self._log_file: Path | None = None
         self._monitor_task: asyncio.Task | None = None
-        self._read_tasks: list[asyncio.Task] = []
+        self._read_task: asyncio.Task | None = None
         self._subscribers: list[asyncio.Queue[LogEntry]] = []
         self._lock = asyncio.Lock()
 
@@ -67,7 +79,6 @@ class SessionManager:
         """Build the claude CLI command for the managed Telegram session."""
         cmd = [
             "claude",
-            "--channels", "plugin:telegram@claude-plugins-official",
             "--dangerously-skip-permissions",
         ]
 
@@ -125,10 +136,86 @@ class SessionManager:
 
         return "\n\n".join(parts)
 
+    # ── Trust dialog handling ───────────────────────────────────────
+
+    async def _auto_accept_trust_dialog(self) -> None:
+        """Wait for the workspace trust dialog and send Enter to accept.
+
+        The Claude CLI shows a trust dialog in interactive mode with option
+        '1. Yes, I trust this folder' pre-selected. We wait for it to appear
+        then send Enter to accept.
+        """
+        if self._master_fd is None:
+            return
+
+        # Read PTY output until we see the trust dialog or timeout
+        buf = b""
+        deadline = time.time() + 15  # 15 second timeout
+        while time.time() < deadline:
+            try:
+                os.set_blocking(self._master_fd, False)
+                try:
+                    chunk = os.read(self._master_fd, 4096)
+                    if chunk:
+                        buf += chunk
+                        text = buf.decode("utf-8", errors="replace")
+                        # Log the startup output
+                        for line in text.split("\n"):
+                            stripped = line.strip()
+                            if stripped:
+                                entry = LogEntry(
+                                    timestamp=time.time(), stream="stdout", line=stripped
+                                )
+                                self._log_buffer.append(entry)
+                                self.info.last_output_at = entry.timestamp
+                                if self._log_file:
+                                    try:
+                                        with open(self._log_file, "a") as f:
+                                            f.write(f"{stripped}\n")
+                                    except Exception:
+                                        pass
+
+                        if "trust" in text.lower() and ("enter" in text.lower() or "confirm" in text.lower()):
+                            logger.info("Trust dialog detected, sending Enter to accept")
+                            await asyncio.sleep(0.5)
+                            os.write(self._master_fd, b"\r")
+                            # Give it a moment to process
+                            await asyncio.sleep(2)
+                            # Drain any remaining startup output
+                            try:
+                                os.set_blocking(self._master_fd, False)
+                                remaining = os.read(self._master_fd, 8192)
+                                if remaining:
+                                    for line in remaining.decode("utf-8", errors="replace").split("\n"):
+                                        stripped = line.strip()
+                                        if stripped:
+                                            entry = LogEntry(
+                                                timestamp=time.time(), stream="stdout", line=stripped
+                                            )
+                                            self._log_buffer.append(entry)
+                                            self.info.last_output_at = entry.timestamp
+                                            if self._log_file:
+                                                try:
+                                                    with open(self._log_file, "a") as f:
+                                                        f.write(f"{stripped}\n")
+                                                except Exception:
+                                                    pass
+                            except (OSError, BlockingIOError):
+                                pass
+                            return
+                except (BlockingIOError, OSError):
+                    pass
+            except Exception as e:
+                logger.error("Error during trust dialog handling: %s", e)
+                break
+            await asyncio.sleep(0.3)
+
+        logger.info("No trust dialog detected (may already be trusted), continuing")
+
     # ── Lifecycle ────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Start the Claude Code session."""
+        """Start the Claude Code session under a pseudo-TTY."""
         async with self._lock:
             if self.info.state in (SessionState.RUNNING, SessionState.STARTING):
                 logger.warning("Session already %s", self.info.state)
@@ -149,38 +236,53 @@ class SessionManager:
                 if self.config.agent.workspace
                 else Path.home()
             )
+
             try:
-                self._process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(workspace),
-                )
-            except FileNotFoundError:
+                # Fork with a pseudo-TTY so claude runs in interactive mode
+                pid, master_fd = pty.fork()
+            except OSError as e:
                 self.info.state = SessionState.CRASHED
-                logger.error("'claude' not found in PATH")
-                return
-            except Exception as e:
-                self.info.state = SessionState.CRASHED
-                logger.error("Failed to start session: %s", e)
+                logger.error("Failed to fork PTY: %s", e)
                 return
 
-            now = time.time()
-            self.info.pid = self._process.pid
-            self.info.started_at = now
-            self.info.last_output_at = now
-            self.info.state = SessionState.RUNNING
+            if pid == 0:
+                # ── Child process ──
+                os.chdir(str(workspace))
+                # Ensure claude can find tools in PATH
+                path = os.environ.get("PATH", "")
+                if "/opt/homebrew/bin" not in path:
+                    os.environ["PATH"] = f"/opt/homebrew/bin:/opt/homebrew/sbin:{path}"
+                try:
+                    os.execvp(cmd[0], cmd)
+                except FileNotFoundError:
+                    os._exit(127)
+                except Exception:
+                    os._exit(1)
+            else:
+                # ── Parent process ──
+                self._pid = pid
+                self._master_fd = master_fd
 
-            # Start output readers
-            self._read_tasks = [
-                asyncio.create_task(self._read_stream("stdout", self._process.stdout)),
-                asyncio.create_task(self._read_stream("stderr", self._process.stderr)),
-            ]
+                now = time.time()
+                self.info.pid = pid
+                self.info.started_at = now
+                self.info.last_output_at = now
+                self.info.state = SessionState.RUNNING
 
-            # Start health monitor
-            self._monitor_task = asyncio.create_task(self._monitor_loop())
+                # Auto-accept the workspace trust dialog by sending Enter
+                # after a brief delay (the dialog defaults to "Yes, I trust")
+                await self._auto_accept_trust_dialog()
 
-            logger.info("Session started (pid=%s)", self.info.pid)
+                # Make master_fd non-blocking for async reading
+                os.set_blocking(master_fd, False)
+
+                # Start PTY output reader
+                self._read_task = asyncio.create_task(self._read_pty_output())
+
+                # Start health monitor
+                self._monitor_task = asyncio.create_task(self._monitor_loop())
+
+                logger.info("Session started (pid=%s)", self.info.pid)
 
     async def stop(self) -> None:
         """Gracefully stop the session."""
@@ -189,7 +291,7 @@ class SessionManager:
 
     async def _stop_internal(self) -> None:
         """Internal stop without lock (called from within locked contexts)."""
-        if self._process is None:
+        if self._pid is None:
             self.info.state = SessionState.STOPPED
             return
 
@@ -197,25 +299,44 @@ class SessionManager:
         logger.info("Stopping session (pid=%s)", self.info.pid)
 
         try:
-            self._process.terminate()
-            try:
-                await asyncio.wait_for(self._process.wait(), timeout=10)
-            except asyncio.TimeoutError:
+            os.kill(self._pid, signal.SIGTERM)
+            # Wait for process to exit
+            for _ in range(20):  # 10 seconds max
+                try:
+                    wpid, status = os.waitpid(self._pid, os.WNOHANG)
+                    if wpid != 0:
+                        self.info.exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+                        break
+                except ChildProcessError:
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                # Force kill
                 logger.warning("Session didn't terminate gracefully, killing")
-                self._process.kill()
-                await self._process.wait()
+                try:
+                    os.kill(self._pid, signal.SIGKILL)
+                    os.waitpid(self._pid, 0)
+                except (ProcessLookupError, ChildProcessError):
+                    pass
         except ProcessLookupError:
             pass  # already dead
 
-        self.info.exit_code = self._process.returncode
+        # Close PTY master fd
+        if self._master_fd is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
+
         self.info.state = SessionState.STOPPED
         self.info.pid = None
-        self._process = None
+        self._pid = None
 
         # Cancel reader/monitor tasks
-        for task in self._read_tasks:
-            task.cancel()
-        self._read_tasks.clear()
+        if self._read_task:
+            self._read_task.cancel()
+            self._read_task = None
 
         if self._monitor_task:
             self._monitor_task.cancel()
@@ -232,51 +353,89 @@ class SessionManager:
         await self.start()
         logger.info("Session restarted (restart_count=%s)", self.info.restart_count)
 
-    # ── Output streaming ─────────────────────────────────────────────
+    # ── PTY output reading ───────────────────────────────────────────
 
-    async def _read_stream(self, stream_name: str, stream: asyncio.StreamReader) -> None:
-        """Read lines from a subprocess stream and dispatch to log buffer + subscribers."""
+    async def _read_pty_output(self) -> None:
+        """Read output from the PTY master fd and dispatch to log buffer + subscribers."""
+        loop = asyncio.get_event_loop()
+        buf = b""
+
         try:
             while True:
-                line_bytes = await stream.readline()
-                if not line_bytes:
+                try:
+                    # Use asyncio to read from the PTY fd without blocking
+                    data = await loop.run_in_executor(None, self._blocking_read)
+                    if not data:
+                        break
+
+                    buf += data
+                    # Process complete lines
+                    while b"\n" in buf:
+                        line_bytes, buf = buf.split(b"\n", 1)
+                        line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+                        if not line:
+                            continue
+
+                        entry = LogEntry(timestamp=time.time(), stream="stdout", line=line)
+                        self._log_buffer.append(entry)
+                        self.info.last_output_at = entry.timestamp
+
+                        # Write to log file
+                        if self._log_file:
+                            try:
+                                with open(self._log_file, "a") as f:
+                                    f.write(f"{line}\n")
+                            except Exception:
+                                pass
+
+                        # Push to live subscribers
+                        dead: list[int] = []
+                        for i, queue in enumerate(self._subscribers):
+                            try:
+                                queue.put_nowait(entry)
+                            except asyncio.QueueFull:
+                                dead.append(i)
+                        for i in reversed(dead):
+                            self._subscribers.pop(i)
+
+                except OSError:
+                    # PTY closed
                     break
-
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
-                entry = LogEntry(timestamp=time.time(), stream=stream_name, line=line)
-
-                self._log_buffer.append(entry)
-                self.info.last_output_at = entry.timestamp
-
-                # Write to log file
-                if self._log_file:
-                    try:
-                        with open(self._log_file, "a") as f:
-                            f.write(f"[{stream_name}] {line}\n")
-                    except Exception:
-                        pass
-
-                # Push to live subscribers
-                dead: list[int] = []
-                for i, queue in enumerate(self._subscribers):
-                    try:
-                        queue.put_nowait(entry)
-                    except asyncio.QueueFull:
-                        dead.append(i)
-                for i in reversed(dead):
-                    self._subscribers.pop(i)
 
         except asyncio.CancelledError:
             return
         except Exception as e:
-            logger.error("Stream reader error (%s): %s", stream_name, e)
+            logger.error("PTY reader error: %s", e)
 
-        # Stream ended — check if process is still alive
-        if self._process and self._process.returncode is not None:
-            self.info.exit_code = self._process.returncode
+        # PTY closed — check if process is still alive
+        self._check_child_exit()
+
+    def _blocking_read(self) -> bytes:
+        """Blocking read from PTY master fd. Runs in executor thread."""
+        if self._master_fd is None:
+            return b""
+        try:
+            # Re-enable blocking for this thread-based read
+            os.set_blocking(self._master_fd, True)
+            return os.read(self._master_fd, 4096)
+        except OSError:
+            return b""
+
+    def _check_child_exit(self) -> None:
+        """Check if the child process has exited and update state."""
+        if self._pid is None:
+            return
+        try:
+            wpid, status = os.waitpid(self._pid, os.WNOHANG)
+            if wpid != 0:
+                self.info.exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+                if self.info.state == SessionState.RUNNING:
+                    self.info.state = SessionState.CRASHED
+                    logger.warning("Session exited unexpectedly (code=%s)", self.info.exit_code)
+        except ChildProcessError:
             if self.info.state == SessionState.RUNNING:
                 self.info.state = SessionState.CRASHED
-                logger.warning("Session exited unexpectedly (code=%s)", self.info.exit_code)
+                logger.warning("Session child process gone")
 
     # ── Health monitoring ────────────────────────────────────────────
 
@@ -290,10 +449,8 @@ class SessionManager:
                     continue
 
                 # Check if process is still alive
-                if self._process is None or self._process.returncode is not None:
-                    self.info.state = SessionState.CRASHED
-                    self.info.exit_code = self._process.returncode if self._process else None
-                    logger.warning("Monitor detected session crash (code=%s)", self.info.exit_code)
+                self._check_child_exit()
+                if self.info.state != SessionState.RUNNING:
                     continue
 
                 # Check for stuck state (no output for too long)
