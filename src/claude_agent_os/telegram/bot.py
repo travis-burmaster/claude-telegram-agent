@@ -8,7 +8,27 @@ from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+from claude_agent_os.conversation import get_recent_context
+
 logger = logging.getLogger(__name__)
+
+DATA_DIR = Path.home() / ".claude-agent-os"
+CONVERSATION_DB = DATA_DIR / "memory" / "conversation.db"
+
+
+def _log_conversation(role: str, content: str, session_id: str = "") -> None:
+    """Log a message to the conversation SQLite DB."""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(CONVERSATION_DB))
+        conn.execute(
+            "INSERT INTO conversation (role, content, session_id) VALUES (?, ?, ?)",
+            (role, content, session_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("Failed to log conversation: %s", e)
 
 
 class TelegramBot:
@@ -60,17 +80,22 @@ class TelegramBot:
             return
 
         prompt = update.message.text
+        session_id = f"telegram-{update.message.message_id}"
+        _log_conversation("user", f"[Telegram] {prompt}", session_id)
         try:
             result = await self.agent_pool.spawn(
-                task_id=f"telegram-{update.message.message_id}",
+                task_id=session_id,
                 prompt=prompt,
                 workspace=str(Path.home()),
             )
             response = result.output or "(no response)"
+            # Log assistant response (truncate to keep DB manageable)
+            _log_conversation("assistant", f"[Telegram] {response[:2000]}", session_id)
             for i in range(0, len(response), 4096):
                 await update.message.reply_text(response[i : i + 4096])
         except Exception as e:
             logger.error(f"Agent error: {e}")
+            _log_conversation("assistant", f"[Telegram] Error: {e}", session_id)
             await update.message.reply_text(f"Error: {e}")
 
     async def _handle_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,16 +123,20 @@ class TelegramBot:
         else:
             return
 
+        session_id = f"telegram-{update.message.message_id}"
+        _log_conversation("user", f"[Telegram] {prompt}", session_id)
         try:
             result = await self.agent_pool.spawn(
-                task_id=f"telegram-{update.message.message_id}",
+                task_id=session_id,
                 prompt=prompt,
                 workspace=str(Path.home()),
             )
             response = result.output or "(no response)"
+            _log_conversation("assistant", f"[Telegram] {response[:2000]}", session_id)
             for i in range(0, len(response), 4096):
                 await update.message.reply_text(response[i : i + 4096])
         except Exception as e:
+            _log_conversation("assistant", f"[Telegram] Error: {e}", session_id)
             await update.message.reply_text(f"Error: {e}")
 
     async def send_message(self, chat_id: str, text: str):
