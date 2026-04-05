@@ -46,21 +46,41 @@ def _build_system_context() -> str:
         f"  logs:    {data_dir / 'logs/'} — agent output logs"
     )
 
-    # Recent conversation context (from Claude Code CLI sessions)
-    conversation_log = data_dir / "memory" / "conversation.md"
-    if conversation_log.exists():
-        convo_text = conversation_log.read_text().strip()
-        if convo_text:
-            # Keep only the tail to avoid bloating the prompt (~4k chars max)
-            max_chars = 4000
-            if len(convo_text) > max_chars:
-                convo_text = "...(truncated)\n" + convo_text[-max_chars:]
-            parts.append(
-                "# Recent Conversation Context\n"
-                "Below is a log of recent interactions between Travis and Claude "
-                "in the CLI. Use this to understand what's being worked on and "
-                "maintain continuity.\n\n" + convo_text
+    # Recent conversation context (from Claude Code CLI sessions via SQLite)
+    conversation_db = data_dir / "memory" / "conversation.db"
+    if conversation_db.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(conversation_db))
+            # Compact: keep only last 200 rows
+            conn.execute(
+                "DELETE FROM conversation WHERE id NOT IN "
+                "(SELECT id FROM conversation ORDER BY id DESC LIMIT 200)"
             )
+            conn.commit()
+            # Fetch recent messages for context
+            rows = conn.execute(
+                "SELECT ts, role, content FROM conversation "
+                "ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+            conn.close()
+            if rows:
+                lines = []
+                for ts, role, content in reversed(rows):
+                    label = "User" if role == "user" else "Assistant"
+                    lines.append(f"[{ts}] **{label}:** {content}")
+                convo_text = "\n".join(lines)
+                # Cap at ~4k chars
+                if len(convo_text) > 4000:
+                    convo_text = "...(truncated)\n" + convo_text[-4000:]
+                parts.append(
+                    "# Recent Conversation Context\n"
+                    "Below is a log of recent interactions between Travis and Claude "
+                    "in the CLI. Use this to understand what's being worked on and "
+                    "maintain continuity.\n\n" + convo_text
+                )
+        except Exception as e:
+            logger.warning("Failed to read conversation DB: %s", e)
 
     # Memory index summary
     memory_index = data_dir / "memory" / "index.json"
