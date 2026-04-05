@@ -6,10 +6,13 @@ for channel plugins (like Telegram) to inject messages via MCP notifications.
 """
 
 import asyncio
+import fcntl
 import logging
 import os
 import pty
 import signal
+import struct
+import termios
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -248,6 +251,7 @@ class SessionManager:
             if pid == 0:
                 # ── Child process ──
                 os.chdir(str(workspace))
+                os.environ["TERM"] = "xterm-256color"
                 # Ensure claude can find tools in PATH
                 path = os.environ.get("PATH", "")
                 if "/opt/homebrew/bin" not in path:
@@ -262,6 +266,14 @@ class SessionManager:
                 # ── Parent process ──
                 self._pid = pid
                 self._master_fd = master_fd
+
+                # Set a reasonable terminal size (rows, cols) so the CLI
+                # doesn't hang or misbehave with a 0x0 default PTY size.
+                try:
+                    winsize = struct.pack("HHHH", 50, 120, 0, 0)
+                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                except OSError:
+                    pass
 
                 now = time.time()
                 self.info.pid = pid
@@ -358,27 +370,27 @@ class SessionManager:
     async def _read_pty_output(self) -> None:
         """Read output from the PTY master fd and dispatch to log buffer + subscribers."""
         loop = asyncio.get_event_loop()
-        buf = b""
 
         try:
             while True:
                 try:
-                    # Use asyncio to read from the PTY fd without blocking
                     data = await loop.run_in_executor(None, self._blocking_read)
                     if not data:
                         break
 
-                    buf += data
-                    # Process complete lines
-                    while b"\n" in buf:
-                        line_bytes, buf = buf.split(b"\n", 1)
-                        line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+                    # Strip ANSI escape sequences for cleaner logging
+                    text = data.decode("utf-8", errors="replace")
+                    # Update last_output_at on any data received
+                    self.info.last_output_at = time.time()
+
+                    # Split into lines (handle both \n and \r\n)
+                    for line in text.split("\n"):
+                        line = line.rstrip("\r")
                         if not line:
                             continue
 
                         entry = LogEntry(timestamp=time.time(), stream="stdout", line=line)
                         self._log_buffer.append(entry)
-                        self.info.last_output_at = entry.timestamp
 
                         # Write to log file
                         if self._log_file:
@@ -399,7 +411,6 @@ class SessionManager:
                             self._subscribers.pop(i)
 
                 except OSError:
-                    # PTY closed
                     break
 
         except asyncio.CancelledError:
