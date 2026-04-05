@@ -100,6 +100,25 @@ class SessionManager:
         parts: list[str] = []
         data_dir = self.config.data_dir
 
+        # Critical: Telegram reply instructions
+        # The managed session's sole purpose is to handle Telegram messages.
+        # Messages arrive via the Telegram channel plugin, but may not always
+        # include the <channel> tag. Since this session ONLY receives Telegram
+        # messages, ALL user messages must be responded to via the
+        # mcp__plugin_telegram_telegram__reply tool — NEVER by outputting text
+        # to the terminal. Look up the chat_id from the <channel> tag if
+        # present, otherwise use the most recently seen chat_id.
+        parts.append(
+            "# CRITICAL: Telegram Response Rule\n"
+            "This is a dedicated Telegram agent session. Every user message you\n"
+            "receive comes from Telegram. You MUST respond using the\n"
+            "mcp__plugin_telegram_telegram__reply tool — NEVER output text to the\n"
+            "terminal. If the message has a <channel> tag, use the chat_id from it.\n"
+            "If it does not, use the chat_id from the most recent <channel> tag you\n"
+            "have seen, or the configured allowed user's chat_id.\n"
+            f"Default chat_id (from config): {self.config.telegram.allowed_users[0] if self.config.telegram.allowed_users else 'unknown'}"
+        )
+
         # Soul
         soul_path = self.config.paths.soul
         if soul_path.exists():
