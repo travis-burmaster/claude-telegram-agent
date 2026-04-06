@@ -17,6 +17,9 @@ brew services start claude-agent-os
 
 # 4. Open the web UI
 open http://127.0.0.1:8420
+
+# Optional: run the proxy manually if you want to inspect it directly
+claude-agent-proxy
 ```
 
 To connect Telegram, add your bot token and allowed user IDs to `~/.claude-agent-os/config.yaml` (see Configuration below), then restart the service with `brew services restart claude-agent-os`.
@@ -32,11 +35,14 @@ uv sync
 # 2. Run setup (creates data dirs, sets web password)
 uv run claude-agent setup
 
-# 3. Start the server
-uv run claude-agent server
+# 3. Start the server with bundled proxy auto-start
+uv run claude-agent server --with-proxy
 
 # 4. Open the web UI
 open http://127.0.0.1:8420
+
+# Optional: run the proxy manually if you want to inspect it directly
+uv run claude-agent-proxy
 ```
 
 To connect Telegram, add your bot token and allowed user IDs to `~/.claude-agent-os/config.yaml` (see Configuration below), then restart.
@@ -57,7 +63,8 @@ To connect Telegram, add your bot token and allowed user IDs to `~/.claude-agent
 
 | Command | Description |
 |---|---|
-| `claude-agent server` | Start the agent server |
+| `claude-agent server` | Start the agent server (`--with-proxy` auto-starts the bundled proxy) |
+| `claude-agent-proxy` | Start the local Claude OAuth proxy on `127.0.0.1:8319` |
 | `claude-agent setup` | Interactive setup (dirs, password, config) |
 | `claude-agent doctor` | Check dependencies and configuration |
 | `claude-agent cron list` | List all cron jobs |
@@ -113,15 +120,39 @@ Environment variables can override config values:
 | Variable | Description |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Overrides `telegram.bot_token` in config |
+| `CLAUDE_PROXY_URL` | Route spawned agents through a local Claude-compatible proxy |
+| `SWARM_PROXY_URL` | Alias for `CLAUDE_PROXY_URL` |
+
+### Proxy mode
+
+If Claude CLI auth is unreliable, you can either auto-start the bundled proxy with the server:
+
+```bash
+claude-agent server --with-proxy
+```
+
+Or run the proxy explicitly and point the agent server at it:
+
+```bash
+claude-agent-proxy
+CLAUDE_PROXY_URL=http://127.0.0.1:8319 claude-agent server
+```
+
+The proxy exposes:
+- `GET /health`
+- `GET /v1/models`
+- `POST /v1/messages`
+
+Spawned Telegram/chat/task agents will prefer the proxy whenever `CLAUDE_PROXY_URL` or `SWARM_PROXY_URL` is set. Homebrew service installs now enable bundled proxy auto-start by default.
 
 ## Always-on operation (macOS)
 
 **Homebrew (recommended):**
 
 ```bash
-brew services start claude-agent-os   # start and enable on boot
-brew services restart claude-agent-os # restart after config changes
-brew services stop claude-agent-os    # stop the service
+CLAUDE_PROXY_URL=http://127.0.0.1:8319 brew services start claude-agent-os   # start and enable on boot
+CLAUDE_PROXY_URL=http://127.0.0.1:8319 brew services restart claude-agent-os # restart after config changes
+brew services stop claude-agent-os                                          # stop the service
 ```
 
 Logs: `/opt/homebrew/var/log/claude-agent-os.log` and `claude-agent-os-error.log`.

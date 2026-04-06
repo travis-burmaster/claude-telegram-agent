@@ -189,7 +189,12 @@ class ClaudeAgentOs < Formula
     log_path var/"log/claude-agent-os.log"
     error_log_path var/"log/claude-agent-os-error.log"
     working_dir Dir.home
-    environment_variables PATH: std_service_path_env
+    environment_variables(
+      PATH: std_service_path_env,
+      CLAUDE_AGENT_AUTO_PROXY: "1",
+      CLAUDE_PROXY_URL: ENV.fetch("CLAUDE_PROXY_URL", ""),
+      SWARM_PROXY_URL: ENV.fetch("SWARM_PROXY_URL", "")
+    )
   end
 
   def caveats
@@ -202,9 +207,15 @@ class ClaudeAgentOs < Formula
 
         brew services start claude-agent-os
 
+      The Homebrew service auto-starts the bundled local proxy by default.
+
       Or run it manually in the foreground:
 
-        claude-agent server
+        claude-agent server --with-proxy
+
+      Optional: inspect the proxy directly:
+
+        claude-agent-proxy
 
       The web dashboard will be available at: http://127.0.0.1:8420
 
@@ -214,6 +225,16 @@ class ClaudeAgentOs < Formula
           bot_token: "YOUR_BOT_TOKEN"
           allowed_users:
             - "YOUR_TELEGRAM_USER_ID"
+
+      To use a local Claude-compatible proxy (recommended when Claude CLI auth is flaky),
+      set one of these before starting the service:
+
+        export CLAUDE_PROXY_URL=http://127.0.0.1:8319
+        # or
+        export SWARM_PROXY_URL=http://127.0.0.1:8319
+        brew services restart claude-agent-os
+
+      Spawned agents will prefer the proxy when either variable is set.
 
       ⚠️  NOTE: The sha256 resources in this formula use approximate values.
       Run `brew update-python-resources claude-agent-os` after tapping to
