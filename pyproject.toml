@@ -30,6 +30,7 @@ dependencies = [
 [project.scripts]
 claude-telegram = "claude_telegram.cli:main"
 claude-agent = "claude_agent_os.cli:main"
+claude-agent-proxy = "claude_agent_os.proxy_server:main"
 
 [project.optional-dependencies]
 dev = [

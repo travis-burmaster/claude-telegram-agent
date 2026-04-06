@@ -196,13 +196,17 @@ class ClaudeAgentOs < Formula
 
         claude-agent setup
 
+      Then start the local proxy (optional but recommended):
+
+        claude-agent-proxy
+
       Then start the agent server:
 
-        brew services start claude-agent-os
+        CLAUDE_PROXY_URL=http://127.0.0.1:8319 brew services start claude-agent-os
 
       Or run it manually in the foreground:
 
-        claude-agent server
+        CLAUDE_PROXY_URL=http://127.0.0.1:8319 claude-agent server
 
       The web dashboard will be available at: http://127.0.0.1:8420
 

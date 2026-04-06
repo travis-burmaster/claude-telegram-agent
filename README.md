@@ -12,10 +12,13 @@ brew install --HEAD claude-agent-os
 # 2. Run setup (creates data dirs, sets web password)
 claude-agent setup
 
-# 3. Start as a background service (survives reboots)
-brew services start claude-agent-os
+# 3. Start the local Claude OAuth proxy (optional but recommended)
+claude-agent-proxy
 
-# 4. Open the web UI
+# 4. Start as a background service (survives reboots)
+CLAUDE_PROXY_URL=http://127.0.0.1:8319 brew services start claude-agent-os
+
+# 5. Open the web UI
 open http://127.0.0.1:8420
 ```
 
