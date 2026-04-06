@@ -191,6 +191,7 @@ class ClaudeAgentOs < Formula
     working_dir Dir.home
     environment_variables(
       PATH: std_service_path_env,
+      CLAUDE_AGENT_AUTO_PROXY: "1",
       CLAUDE_PROXY_URL: ENV.fetch("CLAUDE_PROXY_URL", ""),
       SWARM_PROXY_URL: ENV.fetch("SWARM_PROXY_URL", "")
     )
@@ -202,17 +203,19 @@ class ClaudeAgentOs < Formula
 
         claude-agent setup
 
-      Then start the local proxy (optional but recommended):
-
-        claude-agent-proxy
-
       Then start the agent server:
 
-        CLAUDE_PROXY_URL=http://127.0.0.1:8319 brew services start claude-agent-os
+        brew services start claude-agent-os
+
+      The Homebrew service auto-starts the bundled local proxy by default.
 
       Or run it manually in the foreground:
 
-        CLAUDE_PROXY_URL=http://127.0.0.1:8319 claude-agent server
+        claude-agent server --with-proxy
+
+      Optional: inspect the proxy directly:
+
+        claude-agent-proxy
 
       The web dashboard will be available at: http://127.0.0.1:8420
 

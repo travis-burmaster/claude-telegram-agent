@@ -1,6 +1,9 @@
 """CLI entry point for claude-agent-os."""
 
+import atexit
 import logging
+import os
+import subprocess
 import sys
 
 import click
@@ -25,12 +28,27 @@ def main(ctx):
 @main.command()
 @click.option("--host", default=None, help="Bind host (overrides config)")
 @click.option("--port", default=None, type=int, help="Bind port (overrides config)")
-def server(host, port):
+@click.option("--with-proxy", is_flag=True, help="Auto-start bundled local proxy if no proxy URL is configured")
+def server(host, port, with_proxy):
     """Start the agent server."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     from claude_agent_os.server import create_app
     import uvicorn
+
+    proxy_proc = None
+    proxy_url = os.environ.get("CLAUDE_PROXY_URL") or os.environ.get("SWARM_PROXY_URL")
+    auto_proxy = with_proxy or os.environ.get("CLAUDE_AGENT_AUTO_PROXY") == "1"
+    if auto_proxy and not proxy_url:
+        proxy_cmd = [sys.executable, "-m", "claude_agent_os.proxy_server"]
+        console.print("[cyan]Starting bundled Claude proxy on http://127.0.0.1:8319[/cyan]")
+        proxy_proc = subprocess.Popen(proxy_cmd)
+        os.environ["CLAUDE_PROXY_URL"] = "http://127.0.0.1:8319"
+
+        def _cleanup_proxy():
+            if proxy_proc and proxy_proc.poll() is None:
+                proxy_proc.terminate()
+        atexit.register(_cleanup_proxy)
 
     app = create_app()
     h = host or app.state.config.web.host
