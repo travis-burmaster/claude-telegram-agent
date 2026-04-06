@@ -33,6 +33,11 @@ class ClaudeAgentOs < Formula
     sha256 "3c7ea86b6b2eb6b5473e39e26de4f1c8df1e8d0cc7fce80b0d31af5df14d98d"
   end
 
+  resource "cffi" do
+    url "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz"
+    sha256 "44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529"
+  end
+
   resource "certifi" do
     url "https://files.pythonhosted.org/packages/source/c/certifi/certifi-2025.1.31.tar.gz"
     sha256 "3d5da6f9c287f9babb1e557e4a1eed97c5a1b37f66cdddd5b7a1780a6f3f3b7"
@@ -41,6 +46,11 @@ class ClaudeAgentOs < Formula
   resource "click" do
     url "https://files.pythonhosted.org/packages/source/c/click/click-8.1.8.tar.gz"
     sha256 "ed53c9d8a4567f82cc2f03bf73b1f20a3c7c0b4d3e3ce12b1c5d8c8b6c0f0b8"
+  end
+
+  resource "curl-cffi" do
+    url "https://files.pythonhosted.org/packages/48/5b/89fcfebd3e5e85134147ac99e9f2b2271165fd4d71984fc65da5f17819b7/curl_cffi-0.15.0.tar.gz"
+    sha256 "ea0c67652bf6893d34ee0f82c944f37e488f6147e9421bef1771cc6545b02ded"
   end
 
   resource "fastapi" do
@@ -106,6 +116,11 @@ class ClaudeAgentOs < Formula
   resource "pygments" do
     url "https://files.pythonhosted.org/packages/source/P/Pygments/pygments-2.19.1.tar.gz"
     sha256 "61c16d2a8576dc0649d9f39e089b5f02bcd27fba10d8fb4dcc28173f7a45151f"
+  end
+
+  resource "pycparser" do
+    url "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz"
+    sha256 "600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"
   end
 
   resource "python-dotenv" do

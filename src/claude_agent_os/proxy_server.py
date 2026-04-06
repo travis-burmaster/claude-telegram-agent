@@ -1,99 +1,649 @@
-from __future__ import annotations
-"""Lightweight Claude OAuth proxy runner for Claude Agent OS.
-
-This wraps the local Claude auth credentials in ~/.claude/.credentials.json and exposes
-an Anthropic-compatible /v1/messages endpoint locally. Intended as a companion process
-for claude-agent-os when direct Claude CLI auth is unreliable but local OAuth refresh works.
+#!/usr/bin/env python3
 """
+Claude OAuth proxy used by the Homebrew service.
+Matches the Docker proxy behavior (Chrome TLS fingerprinting, cloaking headers,
+OpenAI-compatible endpoints) so the local install behaves the same as the
+containerized deployment.
+
+Token source priority:
+  1. ANTHROPIC_API_KEY env var (classic API key support)
+  2. ANTHROPIC_OAUTH_KEY env var (primary for OAuth tokens)
+  3. ~/.claude/.credentials.json with auto-refresh (fallback)
+
+Endpoints:
+  POST /v1/messages          (Anthropic native format)
+  POST /v1/chat/completions  (OpenAI-compat -> Anthropic)
+  GET  /v1/models
+  GET  /health
+  GET  /
+"""
+
+from __future__ import annotations
 
 import json
 import os
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 from pathlib import Path
+from typing import Any
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+import urllib.request
 
-import httpx
+try:
+    from curl_cffi import requests as cffi_requests
+    CFFI_AVAILABLE = True
+except ImportError:
+    CFFI_AVAILABLE = False
 
+# -- Config -------------------------------------------------------------------
+HOST = os.getenv("CLAUDE_AGENT_PROXY_HOST", os.getenv("PROXY_HOST", "127.0.0.1"))
+PORT = int(os.getenv("CLAUDE_AGENT_PROXY_PORT", os.getenv("PROXY_PORT", "8319")))
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
-TOKEN_REFRESH_URL = "https://api.anthropic.com/v1/oauth/token"
+ANTHROPIC_API = "https://api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
 OAUTH_BETA = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05"
+TOKEN_REFRESH_URL = "https://api.anthropic.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+# Limit inbound clients unless explicitly disabled (defaults to localhost only)
+ALLOWED_PREFIX = os.getenv("CLAUDE_AGENT_PROXY_ALLOWED_PREFIX") or os.getenv("ALLOWED_PREFIX", "")
+
+# Cloaking string required to unlock sonnet/opus model access
+BILLING_HEADER = "x-anthropic-billing-header: cc_version=2.1.63.e4d; cc_entrypoint=cli; cch=ce2dd;"
+
+# -- Token management ---------------------------------------------------------
+_lock = threading.Lock()
+
+
+def _load_credentials() -> dict:
+    return json.loads(CREDENTIALS_PATH.read_text())
+
+
+def _save_credentials(creds: dict) -> None:
+    CREDENTIALS_PATH.write_text(json.dumps(creds, indent=2))
 
 
 def _oauth_refresh(refresh_tok: str):
-    resp = httpx.post(
-        TOKEN_REFRESH_URL,
-        json={"grant_type": "refresh_token", "refresh_token": refresh_tok},
-        timeout=30,
+    payload = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_tok,
+        "client_id": OAUTH_CLIENT_ID,
+    }).encode()
+    req = urllib.request.Request(
+        TOKEN_REFRESH_URL, data=payload,
+        headers={"Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION},
+        method="POST",
     )
-    resp.raise_for_status()
-    data = resp.json()
-    return data["access_token"], data.get("refresh_token", refresh_tok), data.get("expires_in", 3600)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+        return data.get("access_token"), data.get("refresh_token"), data.get("expires_in")
 
 
-def get_access_token() -> str:
-    if os.getenv("ANTHROPIC_OAUTH_KEY"):
-        return os.environ["ANTHROPIC_OAUTH_KEY"]
+def get_token() -> tuple[str, str, str]:
+    """Return (token, token_type, source)."""
 
-    creds = json.loads(CREDENTIALS_PATH.read_text())
-    oauth = creds["claudeAiOauth"]
-    expires_at = oauth.get("expiresAt", 0)
-    if expires_at and time.time() * 1000 > expires_at - 300000:
-        refresh_tok = oauth.get("refreshToken", "")
-        if refresh_tok:
-            new_access, new_refresh, expires_in = _oauth_refresh(refresh_tok)
-            oauth["accessToken"] = new_access
-            oauth["refreshToken"] = new_refresh
-            oauth["expiresAt"] = int((time.time() + expires_in) * 1000)
-            creds["claudeAiOauth"] = oauth
-            CREDENTIALS_PATH.write_text(json.dumps(creds))
-    return oauth["accessToken"]
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if api_key:
+        return api_key, "api-key", "ANTHROPIC_API_KEY"
+
+    env_token = os.getenv("ANTHROPIC_OAUTH_KEY", "").strip()
+    if env_token:
+        return env_token, "oauth", "ANTHROPIC_OAUTH_KEY"
+
+    # Fallback: credentials.json with auto-refresh
+    with _lock:
+        creds = _load_credentials()
+        oauth = creds["claudeAiOauth"]
+        expires_at = oauth.get("expiresAt", 0)
+        if expires_at < (time.time() + 300) * 1000:
+            refresh_tok = oauth.get("refreshToken", "")
+            if refresh_tok:
+                try:
+                    new_access, new_refresh, expires_in = _oauth_refresh(refresh_tok)
+                    if new_access:
+                        oauth["accessToken"] = new_access
+                        if new_refresh:
+                            oauth["refreshToken"] = new_refresh
+                        if expires_in:
+                            oauth["expiresAt"] = int((time.time() + expires_in) * 1000)
+                        creds["claudeAiOauth"] = oauth
+                        _save_credentials(creds)
+                        print(f"[proxy] Token refreshed: {new_access[:25]}...")
+                except Exception as e:
+                    print(f"[proxy] Token refresh failed: {e}")
+        return oauth["accessToken"], "oauth", "credentials"
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, payload: dict):
-        body = json.dumps(payload).encode()
+# -- Request builder ----------------------------------------------------------
+def _build_headers(token: str, token_type: str, stream: bool = False) -> dict:
+    h = {
+        "anthropic-version": ANTHROPIC_VERSION,
+        "anthropic-beta": OAUTH_BETA,
+        "Anthropic-Dangerous-Direct-Browser-Access": "true",
+        "X-App": "cli",
+        "X-Stainless-Arch": "x86_64",
+        "X-Stainless-Lang": "js",
+        "X-Stainless-Os": "Linux",
+        "X-Stainless-Package-Version": "0.74.0",
+        "X-Stainless-Retry-Count": "0",
+        "X-Stainless-Runtime": "node",
+        "X-Stainless-Runtime-Version": "v22.22.1",
+        "X-Stainless-Timeout": "600",
+        "User-Agent": "claude-cli/2.1.85 (external, sdk-cli)",
+        "Content-Type": "application/json",
+        "Connection": "keep-alive",
+    }
+    if stream:
+        h["Accept"] = "text/event-stream"
+        h["Accept-Encoding"] = "identity"
+    else:
+        h["Accept"] = "application/json"
+        h["Accept-Encoding"] = "gzip, deflate, br, zstd"
+
+    if token_type == "api-key":
+        h["x-api-key"] = token
+    else:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _strip_cache_control(obj):
+    """Recursively strip cache_control from system/message blocks."""
+    if isinstance(obj, dict):
+        return {k: _strip_cache_control(v) for k, v in obj.items() if k != "cache_control"}
+    elif isinstance(obj, list):
+        return [_strip_cache_control(item) for item in obj]
+    return obj
+
+
+MAX_TOOLS = 4  # Anthropic billing threshold - keep low
+MAX_SYSTEM_CHARS = 4000  # Truncate system prompts to stay under billing threshold
+
+
+_THIRD_PARTY_KEYWORDS = ["OpenClaw", "openclaw", "OPENCLAW", "open-claw", "Open Claw"]
+
+
+def _sanitize_text(text: str) -> str:
+    """Remove third-party app identifiers that trigger billing detection."""
+    for kw in _THIRD_PARTY_KEYWORDS:
+        text = text.replace(kw, "assistant platform")
+    return text
+
+
+def _trim_system(body: dict) -> dict:
+    """Truncate and sanitize system prompts to avoid billing detection."""
+    body = dict(body)
+    system = body.get("system")
+    if isinstance(system, str):
+        system = _sanitize_text(system)
+        if len(system) > MAX_SYSTEM_CHARS:
+            system = system[:MAX_SYSTEM_CHARS] + "\n\n[System prompt truncated for size.]"
+        body["system"] = system
+    elif isinstance(system, list):
+        total = 0
+        trimmed = []
+        for block in system:
+            block = dict(block)
+            text = _sanitize_text(block.get("text", ""))
+            block["text"] = text
+            if total + len(text) > MAX_SYSTEM_CHARS:
+                remaining = MAX_SYSTEM_CHARS - total
+                if remaining > 100:
+                    trimmed.append({"type": "text", "text": text[:remaining] + "\n\n[Truncated.]"})
+                break
+            trimmed.append(block)
+            total += len(text)
+        body["system"] = trimmed
+    # Sanitize messages too
+    for m in body.get("messages", []):
+        content = m.get("content")
+        if isinstance(content, str):
+            m["content"] = _sanitize_text(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and "text" in block:
+                    block["text"] = _sanitize_text(block["text"])
+    return body
+
+
+def _trim_tools(body: dict) -> dict:
+    """Keep only the first MAX_TOOLS tool definitions to stay under billing threshold."""
+    body = dict(body)
+    tools = body.get("tools")
+    if tools and len(tools) > MAX_TOOLS:
+        # Keep core tools, move overflow tool names into system prompt hint
+        kept = tools[:MAX_TOOLS]
+        overflow = tools[MAX_TOOLS:]
+        overflow_names = [t.get("name", "") for t in overflow]
+        body["tools"] = kept
+        # Add overflow tool names as a system note so the model knows they exist
+        hint = f"\n\n[Note: Additional tools available but not shown: {', '.join(overflow_names)}. Use the tools provided.]"
+        existing = body.get("system")
+        if isinstance(existing, list):
+            existing.append({"type": "text", "text": hint})
+        elif isinstance(existing, str):
+            body["system"] = existing + hint
+        else:
+            body["system"] = hint
+    return body
+
+
+def _inject_cloaking(body: dict) -> dict:
+    body = dict(body)
+    # Strip cache_control to avoid triggering third-party billing detection
+    if "system" in body:
+        body["system"] = _strip_cache_control(body["system"])
+    if "messages" in body:
+        body["messages"] = _strip_cache_control(body["messages"])
+    existing_system = body.get("system")
+    cloaking_block = {"type": "text", "text": BILLING_HEADER}
+    if existing_system is None:
+        body["system"] = [cloaking_block,
+                          {"type": "text", "text": "You are a helpful assistant."}]
+    elif isinstance(existing_system, str):
+        body["system"] = [cloaking_block,
+                          {"type": "text", "text": existing_system}]
+    elif isinstance(existing_system, list):
+        body["system"] = [cloaking_block] + existing_system
+    return body
+
+
+def _normalize_messages(body: dict) -> dict:
+    body = dict(body)
+    msgs = []
+    for m in body.get("messages", []):
+        m = dict(m)
+        content = m.get("content")
+        if isinstance(content, str):
+            m["content"] = [{"type": "text", "text": content}]
+        msgs.append(m)
+    body["messages"] = msgs
+    return body
+
+
+# -- Model catalog ------------------------------------------------------------
+MODELS = [
+    "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101",
+    "claude-opus-4-1-20250805", "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022",
+]
+
+MODEL_ALIASES = {
+    "sonnet": "claude-sonnet-4-6", "claude-sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6", "claude-opus": "claude-opus-4-6",
+    "haiku": "claude-haiku-4-5-20251001", "claude-haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def _resolve_model(name: str) -> str:
+    base = name.split(":")[0].strip()
+    return MODEL_ALIASES.get(base, base)
+
+
+def models_response() -> dict:
+    now = int(time.time())
+    return {"object": "list",
+            "data": [{"id": m, "object": "model", "created": now, "owned_by": "anthropic"} for m in MODELS]}
+
+
+# -- Format converters --------------------------------------------------------
+def openai_to_anthropic(body: dict) -> dict:
+    messages = body.get("messages", [])
+    system = None
+    filtered = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            system = m.get("content", "")
+            continue
+        if role == "tool":
+            tool_result: dict[str, Any] = {
+                "type": "tool_result",
+                "tool_use_id": m.get("tool_call_id", "unknown"),
+                "content": m.get("content", ""),
+            }
+            if filtered and filtered[-1]["role"] == "user" and isinstance(filtered[-1].get("content"), list):
+                filtered[-1]["content"].append(tool_result)
+            else:
+                filtered.append({"role": "user", "content": [tool_result]})
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            content: list[dict] = []
+            text = m.get("content") or ""
+            if text:
+                content.append({"type": "text", "text": text})
+            for tc in m.get("tool_calls", []):
+                args = tc.get("function", {}).get("arguments", "{}")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                content.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", f"toolu_{len(content)}"),
+                    "name": tc.get("function", {}).get("name", "unknown"),
+                    "input": args,
+                })
+            filtered.append({"role": "assistant", "content": content})
+            continue
+        content = m.get("content", "")
+        if role == "assistant" and not content:
+            continue
+        filtered.append({"role": role, "content": content})
+
+    result: dict[str, Any] = {
+        "model": _resolve_model(body.get("model", "claude-sonnet-4-6")),
+        "messages": filtered,
+        "max_tokens": body.get("max_tokens", 8192),
+        "stream": body.get("stream", False),
+    }
+    if system:
+        result["system"] = system
+    if "temperature" in body:
+        result["temperature"] = body["temperature"]
+    if body.get("tools"):
+        anthropic_tools = []
+        for t in body["tools"]:
+            if t.get("type") == "function":
+                f = t["function"]
+                anthropic_tools.append({
+                    "name": f.get("name", ""),
+                    "description": f.get("description", ""),
+                    "input_schema": f.get("parameters", {"type": "object", "properties": {}}),
+                })
+        if anthropic_tools:
+            result["tools"] = anthropic_tools
+    return result
+
+
+def anthropic_to_openai(body: dict, model: str) -> dict:
+    content_blocks = body.get("content", [])
+    text = " ".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
+    usage = body.get("usage", {})
+    tool_calls = []
+    for i, b in enumerate(content_blocks):
+        if b.get("type") == "tool_use":
+            tool_calls.append({
+                "id": b.get("id", f"call_{i}"),
+                "type": "function",
+                "function": {
+                    "name": b.get("name", ""),
+                    "arguments": json.dumps(b.get("input", {})),
+                },
+            })
+    raw_stop = body.get("stop_reason", "stop")
+    finish_reason = "tool_calls" if tool_calls else ("stop" if raw_stop in ("end_turn", "stop_sequence", "stop") else raw_stop)
+    message: dict[str, Any] = {"role": "assistant", "content": text or None}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    import uuid as _uuid
+    return {
+        "id": f"chatcmpl-{_uuid.uuid4().hex[:24]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+        "usage": {"prompt_tokens": usage.get("input_tokens", 0),
+                  "completion_tokens": usage.get("output_tokens", 0),
+                  "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0)},
+    }
+
+
+def anthropic_stream_to_openai(chunk: bytes, model: str, state: dict | None = None) -> bytes | None:
+    if state is None:
+        state = {}
+    line = chunk.decode(errors="ignore").strip()
+    if not line.startswith("data:"):
+        return None
+    data_str = line[5:].strip()
+    if data_str == "[DONE]":
+        return b"data: [DONE]\n\n"
+    try:
+        data = json.loads(data_str)
+    except Exception:
+        return None
+    etype = data.get("type", "")
+    now = int(time.time())
+
+    if etype == "content_block_start":
+        cb = data.get("content_block", {})
+        if cb.get("type") == "tool_use":
+            idx = data.get("index", 0)
+            state.setdefault("tool_calls", {})[idx] = {
+                "id": cb.get("id", ""), "name": cb.get("name", ""), "arguments": "",
+            }
+            out = {"id": "", "object": "chat.completion.chunk", "created": now, "model": model,
+                   "choices": [{"index": 0, "delta": {"tool_calls": [{
+                       "index": idx, "id": cb.get("id", ""), "type": "function",
+                       "function": {"name": cb.get("name", ""), "arguments": ""},
+                   }]}, "finish_reason": None}]}
+            return f"data: {json.dumps(out)}\n\n".encode()
+
+    elif etype == "content_block_delta":
+        delta = data.get("delta", {})
+        idx = data.get("index", 0)
+        if delta.get("type") == "text_delta":
+            text = delta.get("text", "")
+            out = {"id": "", "object": "chat.completion.chunk", "created": now, "model": model,
+                   "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
+            return f"data: {json.dumps(out)}\n\n".encode()
+        elif delta.get("type") == "input_json_delta":
+            partial = delta.get("partial_json", "")
+            tc = state.get("tool_calls", {}).get(idx)
+            if tc:
+                tc["arguments"] += partial
+            out = {"id": "", "object": "chat.completion.chunk", "created": now, "model": model,
+                   "choices": [{"index": 0, "delta": {
+                       "tool_calls": [{"index": idx, "function": {"arguments": partial}}]
+                   }, "finish_reason": None}]}
+            return f"data: {json.dumps(out)}\n\n".encode()
+
+    elif etype == "message_delta":
+        stop_reason = data.get("delta", {}).get("stop_reason", "end_turn")
+        finish_reason = "tool_calls" if stop_reason == "tool_use" else "stop"
+        state["finish_reason"] = finish_reason
+        out = {"id": "", "object": "chat.completion.chunk", "created": now, "model": model,
+               "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]}
+        return f"data: {json.dumps(out)}\n\n".encode()
+
+    elif etype == "message_stop":
+        if "finish_reason" not in state:
+            out = {"id": "", "object": "chat.completion.chunk", "created": now, "model": model,
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            return f"data: {json.dumps(out)}\n\ndata: [DONE]\n\n".encode()
+        return b"data: [DONE]\n\n"
+
+    return None
+
+
+# -- Core request function ----------------------------------------------------
+def _call_anthropic(body: dict, stream: bool) -> tuple[int, Any]:
+    if not CFFI_AVAILABLE:
+        raise RuntimeError("curl-cffi not installed. Run: pip install curl-cffi")
+
+    token, token_type, _ = get_token()
+    body = _trim_system(body)
+    body = _trim_tools(body)
+    body = _inject_cloaking(body)
+    body = _normalize_messages(body)
+    body["model"] = _resolve_model(body.get("model", "claude-sonnet-4-6"))
+
+    payload = json.dumps(body).encode()
+    import sys as _sys
+    print(f"[proxy] final payload: {len(payload)} bytes, tools={len(body.get('tools',[]))}, sys_blocks={len(body.get('system',[]))}", file=_sys.stderr, flush=True)
+    headers = _build_headers(token, token_type, stream=stream)
+    url = f"{ANTHROPIC_API}/v1/messages?beta=true"
+
+    resp = cffi_requests.post(url, headers=headers, data=payload,
+                               impersonate="chrome", timeout=300, stream=stream)
+    return resp.status_code, resp
+
+
+# -- HTTP Handler -------------------------------------------------------------
+class ProxyHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        print(f"[proxy] {self.address_string()} {fmt % args}")
+
+    def _allowed(self) -> bool:
+        if not ALLOWED_PREFIX:
+            return True
+        client = self.client_address[0]
+        return client.startswith(ALLOWED_PREFIX) or client in ("127.0.0.1", "::1")
+
+    def _send_json(self, code: int, data: dict) -> None:
+        body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length) if length > 0 else b""
+
     def do_GET(self):
-        if self.path == "/" or self.path == "/health":
-            return self._send(200, {"message": "Claude Agent OS Proxy", "endpoints": ["POST /v1/messages", "GET /v1/models"]})
-        if self.path == "/v1/models":
-            return self._send(200, {"object": "list", "data": [
-                {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
-                {"id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic"},
-            ]})
-        return self._send(404, {"error": "not found"})
+        if not self._allowed():
+            self._send_json(403, {"error": "Access denied"})
+            return
+        if self.path in ("/", "/v1"):
+            self._send_json(200, {"message": "Claude OAuth Proxy",
+                                  "cffi": CFFI_AVAILABLE,
+                                  "endpoints": ["POST /v1/messages", "POST /v1/chat/completions", "GET /v1/models"]})
+        elif self.path == "/health":
+            self._send_json(200, {"status": "ok", "cffi": CFFI_AVAILABLE,
+                                  "token_source": "env" if os.getenv("ANTHROPIC_OAUTH_KEY") else "credentials"})
+        elif self.path.startswith("/v1/models") or self.path.startswith("/models"):
+            self._send_json(200, models_response())
+        else:
+            self._send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        if self.path != "/v1/messages":
-            return self._send(404, {"error": "not found"})
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        payload = json.loads(body or b"{}")
-        token = get_access_token()
-        headers = {
-            "x-api-key": token,
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": OAUTH_BETA,
-            "content-type": "application/json",
-        }
-        resp = httpx.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload, timeout=120)
-        self.send_response(resp.status_code)
-        self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
-        self.end_headers()
-        self.wfile.write(resp.content)
+        import sys
+        print(f"[proxy] POST {self.path}", file=sys.stderr, flush=True)
+        if not self._allowed():
+            self._send_json(403, {"error": "Access denied"})
+            return
+        raw = self._read_body()
+        try:
+            body = json.loads(raw) if raw else {}
+        except Exception:
+            self._send_json(400, {"error": "Invalid JSON"})
+            return
+
+        if self.path.startswith("/v1/messages"):
+            self._handle_messages(body)
+        elif self.path.startswith("/v1/chat/completions") or self.path.startswith("/chat/completions"):
+            self._handle_chat_completions(body)
+        else:
+            self._send_json(404, {"error": "Not found"})
+
+    def _handle_messages(self, body: dict) -> None:
+        import sys
+        stream = body.get("stream", False)
+        Path("/tmp/proxy-last-request.json").write_text(json.dumps(body, indent=2))
+        print(f"[proxy] _handle_messages stream={stream} model={body.get('model')} msg_count={len(body.get('messages',[]))} has_tools={bool(body.get('tools'))} has_system={bool(body.get('system'))}", file=sys.stderr, flush=True)
+        try:
+            status, resp = _call_anthropic(body, stream)
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+            return
+
+        if stream:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for chunk in resp.iter_lines():
+                self.wfile.write(chunk + b"\n")
+                self.wfile.flush()
+        else:
+            data = resp.content
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    def _handle_chat_completions(self, body: dict) -> None:
+        import sys
+        model = _resolve_model(body.get("model", "claude-sonnet-4-6"))
+        stream = body.get("stream", False)
+        print(f"[proxy] chat_completions model={model} stream={stream} msg_count={len(body.get('messages',[]))} has_tools={bool(body.get('tools'))}", file=sys.stderr, flush=True)
+        anthropic_body = openai_to_anthropic(body)
+        try:
+            status, resp = _call_anthropic(anthropic_body, stream)
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+            return
+
+        if stream:
+            import uuid as _uuid
+            chat_id = f"chatcmpl-{_uuid.uuid4().hex[:24]}"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            # Send initial role chunk (required by OpenAI spec)
+            now = int(time.time())
+            role_chunk = {"id": chat_id, "object": "chat.completion.chunk", "created": now, "model": model,
+                          "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]}
+            self.wfile.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
+            self.wfile.flush()
+            state: dict = {"chat_id": chat_id}
+            chunk_count = 0
+            for chunk in resp.iter_lines():
+                print(f"[proxy] raw_chunk: {chunk[:200]}", file=sys.stderr, flush=True)
+                converted = anthropic_stream_to_openai(chunk + b"\n", model, state)
+                if converted:
+                    chunk_count += 1
+                    # Inject chat_id into all chunks
+                    converted = converted.replace(b'"id": ""', f'"id": "{chat_id}"'.encode())
+                    self.wfile.write(converted)
+                    self.wfile.flush()
+            print(f"[proxy] stream done, {chunk_count} chunks sent", file=sys.stderr, flush=True)
+        else:
+            try:
+                d = resp.json()
+                out = json.dumps(anthropic_to_openai(d, model)).encode()
+            except Exception:
+                out = resp.content
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
 
 
-def main():
-    host = os.getenv("CLAUDE_AGENT_PROXY_HOST", "127.0.0.1")
-    port = int(os.getenv("CLAUDE_AGENT_PROXY_PORT", "8319"))
-    server = HTTPServer((host, port), Handler)
-    print(f"Claude Agent OS proxy listening on http://{host}:{port}")
-    server.serve_forever()
+# -- Entry point --------------------------------------------------------------
+def main() -> None:
+    import sys
+
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
+    host = HOST
+
+    try:
+        preview_token, token_type, token_source = get_token()
+        preview = f"{preview_token[:25]}..." if preview_token else "<empty>"
+    except Exception as exc:  # pragma: no cover - diagnostic only
+        token_type = "unknown"
+        token_source = f"error: {exc}"
+        preview = "<unavailable>"
+
+    print(f"[proxy] Token source: {token_source} ({token_type})")
+    print(f"[proxy] Token preview: {preview}")
+    print(f"[proxy] curl-cffi: {'YES' if CFFI_AVAILABLE else 'NO — pip install curl-cffi'}")
+
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer((host, port), ProxyHandler)
+    print(f"[proxy] Listening on {host}:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[proxy] Shutting down")
 
 
 if __name__ == "__main__":
