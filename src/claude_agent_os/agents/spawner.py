@@ -51,7 +51,7 @@ def _build_system_context() -> str:
         "You are a persistent agent. Your files survive across sessions.\n"
         "Key paths:\n"
         f"  soul:    {data_dir / 'soul.md'} — your personality and instructions\n"
-        f"  memory:  {data_dir / 'memory/'} — YAML-frontmatter markdown files organized by type\n"
+        f"  memory:  {data_dir / 'memory/'} — hybrid storage: conversation history lives in SQLite (conversation.db), while long-term memories currently live as YAML-frontmatter markdown files plus index.json\n"
         f"  tasks:   {data_dir / 'tasks/'} — task tracker (active.json)\n"
         f"  cron:    {data_dir / 'cron/'} — scheduled job definitions\n"
         f"  config:  {data_dir / 'config.yaml'} — server and channel config\n"
@@ -66,9 +66,8 @@ def _build_system_context() -> str:
         if convo_text:
             parts.append(
                 "# Recent Conversation Context\n"
-                "Below is a log of recent interactions between Travis and Claude "
-                "in the CLI. Use this to understand what's being worked on and "
-                "maintain continuity.\n\n" + convo_text
+                "Below is recent conversation history loaded from the SQLite conversation store. "
+                "Use this to understand what's being worked on and maintain continuity.\n\n" + convo_text
             )
     except Exception as e:
         logger.warning("Failed to read conversation DB: %s", e)
